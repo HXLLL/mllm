@@ -186,6 +186,7 @@ class CMakeBuildTask(Task):
             "cmake",
             "--build",
             os.path.join(PROJECT_ROOT_PATH, self.config.get("cmake_cfg_path", "build")),
+            "--", "-j", "2"
         ]
 
     def run(self):
