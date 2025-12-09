@@ -16,7 +16,7 @@ Tasks:
         - "-DMLLM_KERNEL_USE_THREADS=ON"
         - "-DMLLM_KERNEL_THREADS_VENDOR_OPENMP=ON"
         - "-DMLLM_BUILD_SDK_C_BINDING=ON"
-        - "-DCMAKE_INSTALL_PREFIX=./mllm-cli/mllm/SDK/"
+        - "-DCMAKE_INSTALL_PREFIX=~/.local"
   - CMakeBuildTask:
       cmake_cfg_path: "build"
   - CMakeInstallTask:
