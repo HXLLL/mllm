@@ -47,12 +47,11 @@ dispatch_apply(__num__, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 
 // Apple GCD does not need explicit thread count setting
 #define MLLM_SET_NUM_THREADS(num_threads) \
   do { (void)(num_threads); } while (0)
-#endif  // defined(__APPLE__) && defined(MLLM_KERNEL_THREADS_VENDOR_APPLE_GCD)
 
 //===----------------------------------------------------------------------===//
 // OpenMP.
 //===----------------------------------------------------------------------===//
-#if defined(MLLM_KERNEL_THREADS_VENDOR_OPENMP)
+#elif defined(MLLM_KERNEL_THREADS_VENDOR_OPENMP) // defined(__APPLE__) && defined(MLLM_KERNEL_THREADS_VENDOR_APPLE_GCD)
 // #include <omp.h>
 
 #define OMP_PRAGMA(x) _Pragma(#x)
@@ -77,9 +76,7 @@ dispatch_apply(__num__, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 
 #define MLLM_SET_NUM_THREADS(num_threads) \
   do { (void)(num_threads); } while (0)
 
-#endif  // defined(MLLM_KERNEL_THREADS_VENDOR_OPENMP)
-
-#ifdef MLLM_KERNEL_USE_THREADS_VENDOR_MLLM
+#elif defined(MLLM_KERNEL_USE_THREADS_VENDOR_MLLM) // defined(MLLM_KERNEL_THREADS_VENDOR_OPENMP)
 #include "mllm/engine/HpcThreadPool.hpp"
 
 #define MLLM_AUTO_PARALLEL_BEGIN(__iter__, __num__)                                                                           \
@@ -129,7 +126,9 @@ dispatch_apply(__num__, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 
 
 #define MLLM_SET_NUM_THREADS(num_threads) \
   do { (void)(num_threads); } while (0)
-#endif
+
+#endif // defined(MLLM_KERNEL_USE_THREADS_VENDOR_MLLM)
+
 #else  // MLLM_KERNEL_USE_THREADS
 
 #define MLLM_AUTO_PARALLEL_BEGIN(__iter__, __num__) for (int __iter__ = 0; __iter__ < __num__; ++__iter__) {
