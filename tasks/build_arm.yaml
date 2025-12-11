@@ -25,6 +25,3 @@ Tasks:
       cmake_cfg_path: "build"
   - CMakeInstallTask:
       cmake_cfg_path: "build"
-  - MllmCliBuildTask:
-      build_dir: "mllm-cli/build"
-      cli_root: "mllm-cli"

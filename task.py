@@ -1,15 +1,16 @@
+import argparse
+import json
+import logging
 import os
+import platform
 import re
+import shutil
 import sys
 import time
-import json
-import yaml
-import shutil
-import logging
-import platform
-import argparse
 from pathlib import Path
 from typing import Dict, List
+
+import yaml
 
 logging.basicConfig(
     format="%(asctime)s, [%(levelname)s]: %(message)s", level=logging.INFO
@@ -185,8 +186,7 @@ class CMakeBuildTask(Task):
         self.CMAKE_COMMAND = [
             "cmake",
             "--build",
-            os.path.join(PROJECT_ROOT_PATH, self.config.get("cmake_cfg_path", "build")),
-            "--", "-j", "2"
+            os.path.join(PROJECT_ROOT_PATH, self.config.get("cmake_cfg_path", "build"))
         ]
 
     def run(self):
