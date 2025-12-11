@@ -4,7 +4,7 @@
 Tasks:
   - CMakeConfigTask:
       cmake_cfg_path: "build"
-      cmake_build_type: "Release"
+      cmake_build_type: "RelWithDebInfo" 
       cmake_extra_args:
         # Optional, If use Highway
         - "-DHWY_ENABLE_TESTS=OFF"
@@ -17,6 +17,10 @@ Tasks:
         - "-DMLLM_KERNEL_THREADS_VENDOR_OPENMP=ON"
         - "-DMLLM_BUILD_SDK_C_BINDING=ON"
         - "-DCMAKE_INSTALL_PREFIX=~/.local"
+        - "-DMLLM_ENABLE_EXAMPLE=ON"
+        - "-DMLLM_ENABLE_BENCHMARK=ON"
+        - "-DMLLM_ENABLE_TEST=ON"
+        - "-DMLLM_ENABLE_TOOLS=ON"
   - CMakeBuildTask:
       cmake_cfg_path: "build"
   - CMakeInstallTask:
