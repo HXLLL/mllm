@@ -124,7 +124,7 @@ MLLM_MAIN({
       mllm::print("    Decode Speed :", result.decode_speed, "tokens/s");
 
       // Sleep for 5 seconds between runs to cool down
-      if (i < 2) {
+      if (i < total_runs - 1) {
         mllm::print("    Cooling down for 5 seconds...");
         std::this_thread::sleep_for(std::chrono::seconds(5));
       }
