@@ -36,12 +36,32 @@ public:
   }
   
   void record(std::unique_ptr<Event> event) {
-    events_.push_back(std::move(event));
+    if (enabled_) {
+      events_.push_back(std::move(event));
+    }
   }
   
   template<typename EventType, typename... Args>
   void record(Args&&... args) {
-    events_.emplace_back(std::make_unique<EventType>(std::forward<Args>(args)...));
+    if (enabled_) {
+      events_.emplace_back(std::make_unique<EventType>(std::forward<Args>(args)...));
+    }
+  }
+  
+  // 启用 tracing，重置开始时间
+  void enable() {
+    enabled_ = true;
+    start_time_ = std::chrono::high_resolution_clock::now();
+  }
+  
+  // 禁用 tracing
+  void disable() {
+    enabled_ = false;
+  }
+  
+  // 检查是否启用
+  [[nodiscard]] bool isEnabled() const {
+    return enabled_;
   }
   
   [[nodiscard]] const std::vector<std::unique_ptr<Event>>& getEvents() const { 
@@ -105,6 +125,7 @@ public:
 private:
   std::vector<std::unique_ptr<Event>> events_;
   std::chrono::high_resolution_clock::time_point start_time_;
+  bool enabled_ = false;
 };
 
 // 全局 Tracer 访问函数

@@ -26,6 +26,7 @@ MLLM_MAIN({
   auto& pp = mllm::Argparse::add<std::string>("-pp|--prompt_length").help("Prompt length");
   auto& tg = mllm::Argparse::add<std::string>("-tg|--test_generation_length").help("Test Generation length");
   auto& cache_length = mllm::Argparse::add<int32_t>("-cl|--cache_length").help("Cache length");
+  auto& trace_file = mllm::Argparse::add<std::string>("--trace_file").help("Trace file path (CSV). If not specified, tracing is disabled");
   mllm::Argparse::parse(argc, argv);
 
   // Print Build Version
@@ -67,6 +68,12 @@ MLLM_MAIN({
   // Warmup run
   mllm::print("Warmup Run");
   benchmark->warmup();
+  
+  // Enable tracing after warmup if trace file is specified
+  if (trace_file.isSet()) {
+    mllm::globalTracer().enable();
+    mllm::print("Tracing enabled, output will be written to:", trace_file.get());
+  }
 
   // Split pp and tg if they have multiple set.
   std::vector<std::pair<int32_t, int32_t>> pp_tg_pairs;
@@ -159,11 +166,10 @@ MLLM_MAIN({
   mllm::print("Benchmark Tests Completed");
   mllm::print("========================================");
 
-  // 导出 tracing 数据到 CSV 文件
-  if (mllm::globalTracer().size() > 0) {
-    std::string csv_path = "layer_trace.csv";
-    if (mllm::globalTracer().exportToCSV(csv_path)) {
-      mllm::print("Layer tracing data exported to:", csv_path);
+  // 导出 tracing 数据到 CSV 文件（如果启用了 tracing）
+  if (trace_file.isSet() && mllm::globalTracer().size() > 0) {
+    if (mllm::globalTracer().exportToCSV(trace_file.get())) {
+      mllm::print("Layer tracing data exported to:", trace_file.get());
       mllm::print("Total events recorded:", mllm::globalTracer().size());
     } else {
       mllm::print("Failed to export tracing data to CSV");
