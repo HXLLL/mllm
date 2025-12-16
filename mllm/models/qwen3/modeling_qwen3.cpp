@@ -145,7 +145,6 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   auto llm_embedding_cos = inputs[2];
   auto past_kv_cache = args[0].get<nn::StaticCache*>();
 
-
   // ========== 2. 线性投影生成 Q、K、V ==========
   // 通过三个独立的线性层将输入投影为 Query、Key、Value
   // 输出形状: [B, S, H * D] (对于 Q) 或 [B, S, KV_H * D] (对于 K、V)
@@ -194,6 +193,8 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   auto [key_states_new, value_states_new] = past_kv_cache->updateKVCache(layer_idx_, key_states, value_states);
   key_states = key_states_new;
   value_states = value_states_new;
+
+  globalTracer().record<KVCacheCompleteEvent>(layer_idx_, S, 0);
 
   // ========== 9. 计算注意力分数 ==========
   // 计算 Q @ K^T，得到注意力权重矩阵
@@ -252,6 +253,8 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   // 输出形状: [B, S, hidden_size]
   x = self_attn_(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0];
 
+  globalTracer().record<SelfAttentionCompleteEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
+
   // ========== 4. 残差连接（注意力分支） ==========
   // 将注意力输出与原始输入相加，实现残差连接
   // 这有助于梯度流动和模型训练
@@ -264,11 +267,14 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   // 输出形状: [B, S, hidden_size]
   x = post_attention_layer_norm_(tmp);
 
+  globalTracer().record<MLPBeginEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
   // ========== 6. MLP 前向传播 ==========
   // 通过 MLP（多层感知机）进行非线性变换
   // MLP 包含 gate_proj、SiLU 激活、up_proj、down_proj 等操作
   // 输出形状: [B, S, hidden_size]
   x = mlp_(x)[0];
+
+  globalTracer().record<MLPCompleteEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
 
   // ========== 7. 残差连接（MLP 分支） ==========
   // 将 MLP 输出与注意力分支的输出相加，完成第二个残差连接
