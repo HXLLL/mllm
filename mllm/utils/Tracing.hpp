@@ -107,4 +107,10 @@ private:
   std::chrono::high_resolution_clock::time_point start_time_;
 };
 
+// 全局 Tracer 访问函数
+inline Tracer& globalTracer() {
+  static Tracer tracer;
+  return tracer;
+}
+
 } // namespace mllm
