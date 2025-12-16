@@ -283,36 +283,37 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   // 获取所有 Transformer 解码器层的列表
   auto& blocks = decode_blocks_.list();
 
-  // ========== 2. Token 嵌入 ==========
-  // 将输入的 token IDs 转换为词嵌入向量
+  // ========== 2. 获取输入参数 ==========
   // inputs[0]: token IDs，形状为 [B, S]，每个元素是词汇表中的索引
-  // 输出形状: [B, S, hidden_size]
-  auto x = embedding_(inputs[0]);
-
-  // ========== 3. 获取位置编码和 KV Cache ==========
   // inputs[1]: RoPE 位置编码的正弦值
   // inputs[2]: RoPE 位置编码的余弦值
   // args[0]: KV cache，用于存储所有层的注意力状态
   // args[1]: 当前 token 序号（可选）
+  auto token_ids = inputs[0];
   auto llm_embedding_sin = inputs[1];
   auto llm_embedding_cos = inputs[2];
   auto& kv_cache = args[0];
 
   // 获取 token_idx（如果提供）
   int token_idx = (args.size() > 1) ? args[1].get<int>() : 0;
-  int seq_len = x.shape()[1];
+  int seq_len = token_ids.shape()[1];
 
-  // ========== 3.5. Chunk 处理配置 ==========
+  // ========== 3. Chunk 处理配置 ==========
   // 如果序列长度大于 chunksize，将序列分成多个 chunk 处理
   // 这样可以减少单次处理的内存占用和计算量
-  const int chunksize = 1;  // 每个 chunk 的大小
+  int chunksize = chunksize_;  // 每个 chunk 的大小（可通过 setChunkSize 动态设置）
 
   // ========== 4. 逐层前向传播（支持 chunk 处理） ==========
   // 如果序列长度小于等于 chunksize，直接处理
   // 否则将序列分成多个 chunk，每个 chunk 单独处理
   if (seq_len <= chunksize) {
     // 短序列：直接处理
-    // 依次通过所有 Transformer 解码器层
+    // ========== 4.1 Token 嵌入 ==========
+    // 将输入的 token IDs 转换为词嵌入向量
+    // 输出形状: [B, S, hidden_size]
+    auto x = embedding_(token_ids);
+
+    // ========== 4.2 依次通过所有 Transformer 解码器层 ==========
     // 每一层包含：Pre-Norm、自注意力、残差连接、Pre-Norm、MLP、残差连接
     // 输出形状: [B, S, hidden_size]
     for (int i = 0; i < blocks.size(); i++) {
@@ -323,8 +324,16 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
       // 记录每层完成时间到全局 tracer
       globalTracer().record<LayerCompleteEvent>(i, seq_len, token_idx);
     }
+
+    // ========== 4.3 最终归一化 ==========
+    // 对所有解码器层的输出进行最终的 RMSNorm 归一化
+    // 这是 Transformer 架构的标准做法，用于稳定输出
+    // 输出形状: [B, S, hidden_size]
+    x = norm_(x);
+
+    return {x};
   } else {
-    // 长序列：分 chunk 处理
+    // 长序列：分 chunk 处理（包括 embedding）
     // 计算 chunk 数量
     int num_chunks = (seq_len + chunksize - 1) / chunksize;  // 向上取整
     std::vector<Tensor> chunk_outputs;
@@ -337,12 +346,18 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
       int chunk_end = std::min(chunk_start + chunksize, seq_len);
       int chunk_len = chunk_end - chunk_start;
 
-      // 切片获取当前 chunk 的输入和位置编码
-      auto x_chunk = x[{kAll, {chunk_start, chunk_end}, kAll}];
+      // ========== 4.1 对当前 chunk 的 token IDs 进行嵌入 ==========
+      // 切片获取当前 chunk 的 token IDs
+      auto token_ids_chunk = token_ids[{kAll, {chunk_start, chunk_end}}];
+      // 将 token IDs 转换为词嵌入向量
+      // 输出形状: [B, chunk_len, hidden_size]
+      auto x_chunk = embedding_(token_ids_chunk);
+
+      // ========== 4.2 切片获取当前 chunk 的位置编码 ==========
       auto sin_chunk = llm_embedding_sin[{kAll, {chunk_start, chunk_end}, kAll}];
       auto cos_chunk = llm_embedding_cos[{kAll, {chunk_start, chunk_end}, kAll}];
 
-      // 对当前 chunk 进行逐层前向传播
+      // ========== 4.3 对当前 chunk 进行逐层前向传播 ==========
       // KV cache 会自动累积，保持上下文连续性
       for (int i = 0; i < blocks.size(); i++) {
         auto& block = blocks[i];
@@ -358,17 +373,18 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
       token_idx += chunk_len;
     }
 
-    // 合并所有 chunk 的输出
-    x = nn::functional::concat(chunk_outputs, 1);  // 在序列维度（dim=1）上合并
+    // ========== 5. 合并所有 chunk 的输出 ==========
+    // 在序列维度（dim=1）上合并
+    auto x = nn::functional::concat(chunk_outputs, 1);
+
+    // ========== 6. 最终归一化 ==========
+    // 对所有解码器层的输出进行最终的 RMSNorm 归一化
+    // 这是 Transformer 架构的标准做法，用于稳定输出
+    // 输出形状: [B, S, hidden_size]
+    x = norm_(x);
+
+    return {x};
   }
-
-  // ========== 5. 最终归一化 ==========
-  // 对所有解码器层的输出进行最终的 RMSNorm 归一化
-  // 这是 Transformer 架构的标准做法，用于稳定输出
-  // 输出形状: [B, S, hidden_size]
-  x = norm_(x);
-
-  return {x};
 }
 
 ARGenerationOutputPast Qwen3ForCausalLM::forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) {

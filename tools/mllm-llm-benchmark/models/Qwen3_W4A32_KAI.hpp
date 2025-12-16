@@ -32,6 +32,13 @@ class Qwen3_W4A32_KAI_Benchmark final : public BenchmarkTemplate {
     mllm::print("Model initialized successfully");
   }
 
+  void setChunkSize(int32_t chunksize) {
+    if (model_) {
+      model_->setChunkSize(chunksize);
+      mllm::print("Chunk size set to:", chunksize);
+    }
+  }
+
   void printModelInfo() override {
     if (!config_) {
       mllm::print("Config not loaded");

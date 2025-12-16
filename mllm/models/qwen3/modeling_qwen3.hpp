@@ -180,16 +180,19 @@ class Qwen3Text final : public nn::Module {
   nn::ModuleList<Qwen3Decoder> decode_blocks_;
   nn::RMSNorm norm_;
   nn::Embedding embedding_;
+  int chunksize_;
 
  public:
-  Qwen3Text() = default;
+  Qwen3Text() : chunksize_(1) {}
 
-  Qwen3Text(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
+  Qwen3Text(const std::string& name, const Qwen3Config& cfg) : nn::Module(name), chunksize_(1) {
     decode_blocks_ = reg<nn::ModuleList<Qwen3Decoder>>("layers", cfg.num_hidden_layers, cfg);
     for (auto [idx, b] : enumerate(decode_blocks_.list())) { b.self_attn_.layer_idx_ = idx; }
     norm_ = reg<nn::RMSNorm>("norm", cfg.rms_norm_eps);
     embedding_ = reg<nn::Embedding>("embed_tokens", cfg.vocab_size, cfg.hidden_size);
   }
+
+  void setChunkSize(int chunksize) { chunksize_ = chunksize; }
 
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 };
@@ -229,6 +232,9 @@ class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
 
   // 重置 token 计数器（在 clear/reset 时调用）
   void resetTokenCounter() { token_counter_ = 0; }
+
+  // 设置 chunksize（用于控制序列分块处理的大小）
+  void setChunkSize(int chunksize) { llm.setChunkSize(chunksize); }
 
  private:
   const Qwen3Config& cfg;

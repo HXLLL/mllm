@@ -16,6 +16,7 @@
 #define STRINGIFY(x) STRINGIFY_INTERNAL(x)
 
 #include "models/All.hpp"
+#include "models/Qwen3_W4A32_KAI.hpp"
 
 MLLM_MAIN({
   auto& help = mllm::Argparse::add<bool>("-h|--help").help("Show help message");
@@ -27,6 +28,7 @@ MLLM_MAIN({
   auto& tg = mllm::Argparse::add<std::string>("-tg|--test_generation_length").help("Test Generation length");
   auto& cache_length = mllm::Argparse::add<int32_t>("-cl|--cache_length").help("Cache length");
   auto& trace_file = mllm::Argparse::add<std::string>("--trace_file").help("Trace file path (CSV). If not specified, tracing is disabled");
+  auto& chunksize = mllm::Argparse::add<int32_t>("-cs|--chunksize").help("Chunk size for sequence processing (default: 1)");
   mllm::Argparse::parse(argc, argv);
 
   // Print Build Version
@@ -63,6 +65,17 @@ MLLM_MAIN({
   // Print Model Info
   mllm::print("Model Info");
   benchmark->init(config_path.get(), model_path.get(), cache_length.get());
+  
+  // Set chunksize if specified
+  if (chunksize.isSet() && chunksize.get() > 0) {
+    // Try to cast to Qwen3_W4A32_KAI_Benchmark to call setChunkSize
+    // We need to include the header and use dynamic_cast or static_cast
+    auto* qwen3_benchmark = dynamic_cast<Qwen3_W4A32_KAI_Benchmark*>(benchmark.get());
+    if (qwen3_benchmark) {
+      qwen3_benchmark->setChunkSize(chunksize.get());
+    }
+  }
+  
   benchmark->printModelInfo();
 
   // Warmup run
