@@ -104,12 +104,13 @@ MLLM_MAIN({
     mllm::print("  Generation Length (TG):", tg);
     mllm::print("----------------------------------------");
 
+    const int total_runs = 1;
     // Storage for results
     std::vector<BenchmarkTemplateResult> results;
-    results.reserve(3);
+    results.reserve(total_runs);
 
-    for (int i = 0; i < 3; ++i) {
-      mllm::print("  Run", i + 1, "of 3...");
+    for (int i = 0; i < total_runs; ++i) {
+      mllm::print("  Run", i + 1, "of", total_runs, "...");
 
       // Clear cache before each run
       benchmark->clear();
@@ -140,9 +141,9 @@ MLLM_MAIN({
       avg_decode_speed += result.decode_speed;
     }
 
-    avg_ttft /= 3.0f;
-    avg_prefill_speed /= 3.0f;
-    avg_decode_speed /= 3.0f;
+    avg_ttft /= total_runs;
+    avg_prefill_speed /= total_runs;
+    avg_decode_speed /= total_runs;
 
     // Print average results
     mllm::print("\n========== Average Results ==========");
