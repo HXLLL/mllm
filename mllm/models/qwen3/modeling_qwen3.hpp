@@ -4,7 +4,6 @@
 #include "mllm/mllm.hpp"
 #include "mllm/nn/Module.hpp"
 #include "mllm/nn/Nn.hpp"
-#include "mllm/nn/Functional.hpp"
 #include "mllm/nn/lmcache/StaticCache.hpp"
 #include "mllm/models/qwen3/configuration_qwen3.hpp"
 #include "mllm/utils/Enumerate.hpp"
@@ -12,61 +11,34 @@
 
 namespace mllm::models::qwen3 {
 
-inline auto makeRoPEInvFreq(int output_dim, float rope_theta) -> Tensor {
-  auto inv_freq = Tensor::empty({output_dim / 2}, kFloat32, kCPU).alloc();
-  auto inv_freq_ptr = inv_freq.ptr<float>();
-  for (int i = 0; i < output_dim / 2; i++) { inv_freq_ptr[i] = 1.0 / std::pow(rope_theta, 2.0 * i / output_dim); }
-  return inv_freq;
-}
+// ========== 生成 RoPE 逆频率向量 ==========
+// 该函数用于生成旋转位置编码（RoPE）所需的逆频率向量
+// 逆频率用于计算不同维度的旋转角度，实现位置信息的编码
+//
+// 参数:
+//   output_dim: 输出维度（通常是 head_dim）
+//   rope_theta: RoPE 的基础频率参数，控制位置编码的周期
+//
+// 返回:
+//   逆频率向量，形状为 [output_dim / 2]
+//   每个元素的计算公式: 1.0 / (rope_theta ^ (2*i / output_dim))
+//   其中 i 是维度索引，范围 [0, output_dim/2)
+auto makeRoPEInvFreq(int output_dim, float rope_theta) -> Tensor;
 
-inline auto makeRotaryPosEmbedding(Tensor& position_ids, const Tensor& inv_freq,
-                                   float attention_scaling = 1.0f) -> std::pair<Tensor, Tensor> {
-  auto batch_size = position_ids.shape()[0];
-  auto seq_len = position_ids.shape()[1];
-  auto inv_freq_len = inv_freq.shape()[0];
-  auto dim = inv_freq_len * 2;
-
-  // Create freqs tensor: position_ids @ inv_freq
-  auto freqs = Tensor::empty({batch_size, seq_len, inv_freq_len}, kFloat32, kCPU).alloc();
-  auto freqs_ptr = freqs.ptr<float>();
-  auto position_ids_ptr = position_ids.ptr<int64_t>();
-  auto inv_freq_ptr = inv_freq.ptr<float>();
-
-  // Compute freqs = position_ids[:, :, None] @ inv_freq[None, :]
-  for (int b = 0; b < batch_size; ++b) {
-    for (int s = 0; s < seq_len; ++s) {
-      auto pos = position_ids_ptr[b * seq_len + s];
-      for (int d = 0; d < inv_freq_len; ++d) {
-        freqs_ptr[b * seq_len * inv_freq_len + s * inv_freq_len + d] = static_cast<float>(pos) * inv_freq_ptr[d];
-      }
-    }
-  }
-
-  // Create sin and cos tensors with shape [batch_size, seq_len, dim]
-  auto sin_emb = Tensor::empty({batch_size, seq_len, dim}, kFloat32, kCPU).alloc();
-  auto cos_emb = Tensor::empty({batch_size, seq_len, dim}, kFloat32, kCPU).alloc();
-  auto sin_ptr = sin_emb.ptr<float>();
-  auto cos_ptr = cos_emb.ptr<float>();
-
-  // Compute sin and cos embeddings: emb = [freqs, freqs]
-  for (int b = 0; b < batch_size; ++b) {
-    for (int s = 0; s < seq_len; ++s) {
-      for (int d = 0; d < inv_freq_len; ++d) {
-        auto freq = freqs_ptr[b * seq_len * inv_freq_len + s * inv_freq_len + d];
-        auto sin_val = std::sin(freq) * attention_scaling;
-        auto cos_val = std::cos(freq) * attention_scaling;
-
-        // Store the same values in both halves: [freqs, freqs]
-        sin_ptr[b * seq_len * dim + s * dim + d] = sin_val;
-        sin_ptr[b * seq_len * dim + s * dim + d + inv_freq_len] = sin_val;
-        cos_ptr[b * seq_len * dim + s * dim + d] = cos_val;
-        cos_ptr[b * seq_len * dim + s * dim + d + inv_freq_len] = cos_val;
-      }
-    }
-  }
-
-  return {sin_emb, cos_emb};
-}
+// ========== 生成旋转位置编码 (RoPE) ==========
+// 该函数基于位置编码和逆频率向量，生成 RoPE 所需的正弦和余弦嵌入
+// RoPE 通过旋转矩阵的方式将位置信息编码到 Query 和 Key 向量中
+//
+// 参数:
+//   position_ids: 位置编码，形状为 [B, S]，每个元素是 token 的位置索引
+//   inv_freq: 逆频率向量，形状为 [dim/2]，由 makeRoPEInvFreq 生成
+//   attention_scaling: 注意力缩放因子，默认为 1.0
+//
+// 返回:
+//   一对张量 (sin_emb, cos_emb)，形状均为 [B, S, dim]
+//   用于后续的旋转位置编码计算
+auto makeRotaryPosEmbedding(Tensor& position_ids, const Tensor& inv_freq,
+                             float attention_scaling = 1.0f) -> std::pair<Tensor, Tensor>;
 
 class Qwen3MLP final : public nn::Module {
   nn::Linear gate_proj_;
@@ -83,14 +55,7 @@ class Qwen3MLP final : public nn::Module {
     down_proj_ = reg<nn::Linear>("down_proj", cfg.intermediate_size, cfg.hidden_size, false, cfg.linear_impl_type);
   }
 
-  std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override {
-    auto x = gate_proj_(inputs[0]);
-    x = silu_(x);
-    auto y = up_proj_(inputs[0]);
-    x = x * y;
-    x = down_proj_(x);
-    return {x};
-  }
+  std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 };
 
 class Qwen3Attention final : public nn::Module {
@@ -140,66 +105,7 @@ class Qwen3Attention final : public nn::Module {
     softmax_ = reg<nn::Softmax>("softmax", -1);
   }
 
-  std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override {
-    auto x = inputs[0];
-    auto llm_embedding_sin = inputs[1];
-    auto llm_embedding_cos = inputs[2];
-    auto past_kv_cache = args[0].get<nn::StaticCache*>();
-
-    // [B, S, H * D]
-    auto query_states = q_proj_(x);
-    auto key_states = k_proj_(x);
-    auto value_states = v_proj_(x);
-
-    int B = inputs[0].shape()[0];
-    int S = inputs[0].shape()[1];
-
-    // [B, S, H, D]
-    query_states = query_states.view({B, S, num_attention_heads_, head_dim_});
-    key_states = key_states.view({B, S, num_key_value_heads_, head_dim_});
-    value_states = value_states.view({B, S, num_key_value_heads_, head_dim_});
-
-    // [B, S, H, D]
-    query_states = rms_norm_q_(query_states);
-    key_states = rms_norm_k_(key_states);
-
-    // [B, H, S, D]
-    query_states = query_states.transpose(1, 2);
-    key_states = key_states.transpose(1, 2);
-    value_states = value_states.transpose(1, 2);
-
-    // [B, H, S, D]
-    query_states = q_rope_(query_states, llm_embedding_sin, llm_embedding_cos);
-    key_states = k_rope_(key_states, llm_embedding_sin, llm_embedding_cos);
-
-    // [B, H, S, D]
-    auto [key_states_new, value_states_new] = past_kv_cache->updateKVCache(layer_idx_, key_states, value_states);
-    key_states = key_states_new;
-    value_states = value_states_new;
-
-    Tensor attn;
-    if (key_states.dtype() == kFloat32) {
-      // attention weight
-      // [B, H, S, S]
-      attn = nn::functional::matmul(query_states, key_states, false, true) * (1.f / sqrtf(head_dim_));
-      attn = mask_(attn);
-      attn = softmax_(attn);
-    } else if (key_states.dtype() == kFloat16) {
-      attn = nn::functional::matmul(query_states.to(kFloat32), key_states.to(kFloat32), false, true) * (1.f / sqrtf(head_dim_));
-      attn = mask_(attn);
-      attn = softmax_(attn);
-      attn = attn.to(kFloat16);
-    }
-
-    // attn output
-    // [B, H, S, S] @ [B, H, S, D] -> [B, H, S, D]
-    auto output = nn::functional::matmul(attn, value_states);
-    // [B, H, S, D] -> [B, S, H, D] -> [B, S, H * D]
-    output = output.transpose(1, 2).view({B, S, num_attention_heads_ * head_dim_});
-    output = o_proj_(output);
-
-    return {output};
-  }
+  std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 
   int layer_idx_;
 };
@@ -220,19 +126,7 @@ class Qwen3Decoder final : public nn::Module {
     post_attention_layer_norm_ = reg<nn::RMSNorm>("post_attention_layernorm", cfg.rms_norm_eps);
   }
 
-  std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override {
-    auto llm_embedding_sin = inputs[1];
-    auto llm_embedding_cos = inputs[2];
-    auto& kv_cache = args[0];
-
-    auto x = input_layer_norm_(inputs[0]);
-    x = self_attn_(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0];
-    auto tmp = x + inputs[0];
-    x = post_attention_layer_norm_(tmp);
-    x = mlp_(x)[0];
-    x = x + tmp;
-    return {x};
-  }
+  std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 };
 
 class Qwen3Text final : public nn::Module {
@@ -250,22 +144,7 @@ class Qwen3Text final : public nn::Module {
     embedding_ = reg<nn::Embedding>("embed_tokens", cfg.vocab_size, cfg.hidden_size);
   }
 
-  std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override {
-    auto& blocks = decode_blocks_.list();
-
-    // X is already embedded
-    auto x = embedding_(inputs[0]);
-
-    auto llm_embedding_sin = inputs[1];
-    auto llm_embedding_cos = inputs[2];
-    auto& kv_cache = args[0];
-
-    for (auto& block : blocks) { x = block(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0]; }
-
-    x = norm_(x);
-
-    return {x};
-  }
+  std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 };
 
 class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
@@ -297,52 +176,9 @@ class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
     registerBuffer("inv_freq", inv);
   }
 
-  ARGenerationOutputPast forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) override {
-    auto sequence = input.at("sequence");
+  ARGenerationOutputPast forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) override;
 
-    // Generate position_ids for the current sequence
-    auto batch_size = sequence.shape()[0];
-    auto seq_len = sequence.shape()[1];
-
-    Tensor position_ids = Tensor::nil();
-    if (input.count("position_ids")) {
-      // Use existing position_ids for decode phase
-      position_ids = input.at("position_ids");
-
-      // For decode phase, increment the last position
-      if (seq_len == 1) {
-        auto last_pos = *position_ids.offsettedPtr<int64_t>({0, position_ids.shape()[1] - 1});
-        position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
-        *position_ids.offsettedPtr<int64_t>({0, 0}) = last_pos + 1;
-      }
-    } else {
-      // Generate position_ids for prefill phase
-      position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
-      auto position_ids_ptr = position_ids.ptr<int64_t>();
-      for (int b = 0; b < batch_size; ++b) {
-        for (int s = 0; s < seq_len; ++s) { position_ids_ptr[b * seq_len + s] = s; }
-      }
-    }
-
-    // Generate RoPE embeddings using the inv_freq buffer
-    auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
-
-    sequence = llm(sequence, llm_embedding_sin, llm_embedding_cos, AnyValue(&kv_cache_))[0];
-
-    // clip x to one seq length
-    {
-      auto S = sequence.shape()[1];
-      sequence = sequence[{kAll, {S - 1}, kAll}];
-    }
-    if (tie_word_embeddings_) { sequence = lm_head_(sequence); }
-
-    return {
-        {"sequence", sequence},
-        {"position_ids", position_ids},
-    };
-  }
-
-  inline nn::StaticCache& kvCache() { return kv_cache_; }
+  nn::StaticCache& kvCache();
 
  private:
   const Qwen3Config& cfg;
