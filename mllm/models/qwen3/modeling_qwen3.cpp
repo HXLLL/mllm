@@ -292,9 +292,14 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   // inputs[1]: RoPE 位置编码的正弦值
   // inputs[2]: RoPE 位置编码的余弦值
   // args[0]: KV cache，用于存储所有层的注意力状态
+  // args[1]: 当前 token 序号（可选）
   auto llm_embedding_sin = inputs[1];
   auto llm_embedding_cos = inputs[2];
   auto& kv_cache = args[0];
+
+  // 获取 token_idx（如果提供）
+  int token_idx = (args.size() > 1) ? args[1].get<int>() : 0;
+  int seq_len = x.shape()[1];
 
   // ========== 4. 逐层前向传播 ==========
   // 依次通过所有 Transformer 解码器层
@@ -303,8 +308,9 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   // for (auto& block : blocks) { 
   for (int i = 0; i < blocks.size(); i++) {
     auto& block = blocks[i];
-    std::cout << "block-" << i << std::endl;
-    x = block(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0]; 
+    x = block(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0];
+    // 记录每层完成时间到全局 tracer
+    globalTracer().record<LayerCompleteEvent>(i, seq_len, token_idx);
   }
 
   // ========== 5. 最终归一化 ==========
@@ -361,9 +367,11 @@ ARGenerationOutputPast Qwen3ForCausalLM::forward(const ARGenerationOutputPast& i
 
   // ========== 5. 通过 Transformer 模型前向传播 ==========
   // 将 token 序列、RoPE 编码和 KV cache 传入模型
+  // 同时传递 token_counter 用于记录每层完成时间
   // 模型会依次通过：嵌入层 -> 多个解码器层 -> 最终归一化
   // 输出形状: [B, S, hidden_size]
-  sequence = llm(sequence, llm_embedding_sin, llm_embedding_cos, AnyValue(&kv_cache_))[0];
+  sequence = llm(sequence, llm_embedding_sin, llm_embedding_cos, 
+                 AnyValue(&kv_cache_), AnyValue(token_counter_++))[0];
 
   // ========== 6. 提取最后一个 token 的表示 ==========
   // 对于自回归生成，通常只需要最后一个位置的隐藏状态

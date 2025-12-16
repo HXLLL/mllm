@@ -8,8 +8,32 @@
 #include "mllm/models/qwen3/configuration_qwen3.hpp"
 #include "mllm/utils/Enumerate.hpp"
 #include "mllm/models/ARGeneration.hpp"
+#include "mllm/utils/Tracing.hpp"
 
 namespace mllm::models::qwen3 {
+
+// ========== 层完成事件 ==========
+// 用于记录每层完成的时间戳，便于性能分析
+class LayerCompleteEvent : public Event {
+public:
+  LayerCompleteEvent(int layer_idx, int seq_len, int token_idx)
+    : layer_idx_(layer_idx), seq_len_(seq_len), token_idx_(token_idx) {}
+
+  [[nodiscard]] std::map<std::string, std::string> toData() const override {
+    return {
+      {"layer_idx", std::to_string(layer_idx_)},
+      {"seq_len", std::to_string(seq_len_)},
+      {"token_idx", std::to_string(token_idx_)}
+    };
+  }
+
+  [[nodiscard]] std::string typeName() const override { return "LayerComplete"; }
+
+private:
+  int layer_idx_;
+  int seq_len_;
+  int token_idx_;  // 当前是第几个 token 的推理
+};
 
 // ========== 生成 RoPE 逆频率向量 ==========
 // 该函数用于生成旋转位置编码（RoPE）所需的逆频率向量
@@ -186,6 +210,7 @@ class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
   nn::Linear lm_head_;
   bool tie_word_embeddings_;
   nn::StaticCache kv_cache_;
+  int token_counter_ = 0;
 };
 
 }  // namespace mllm::models::qwen3
