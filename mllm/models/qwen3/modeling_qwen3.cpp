@@ -2,8 +2,9 @@
 // Licensed under the MIT License.
 
 #include "mllm/models/qwen3/modeling_qwen3.hpp"
+#include "mllm/nn/Functional.hpp"
+#include <algorithm>
 #include <cmath>
-#include <iostream>
 
 namespace mllm::models::qwen3 {
 
@@ -301,18 +302,64 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   int token_idx = (args.size() > 1) ? args[1].get<int>() : 0;
   int seq_len = x.shape()[1];
 
-  // ========== 4. 逐层前向传播 ==========
-  // 依次通过所有 Transformer 解码器层
-  // 每一层包含：Pre-Norm、自注意力、残差连接、Pre-Norm、MLP、残差连接
-  // 输出形状: [B, S, hidden_size]
-  // for (auto& block : blocks) { 
-  for (int i = 0; i < blocks.size(); i++) {
-    auto& block = blocks[i];
-    // 记录每层开始时间到全局 tracer
-    globalTracer().record<LayerBeginEvent>(i, seq_len, token_idx);
-    x = block(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0];
-    // 记录每层完成时间到全局 tracer
-    globalTracer().record<LayerCompleteEvent>(i, seq_len, token_idx);
+  // ========== 3.5. Chunk 处理配置 ==========
+  // 如果序列长度大于 chunksize，将序列分成多个 chunk 处理
+  // 这样可以减少单次处理的内存占用和计算量
+  const int chunksize = 1;  // 每个 chunk 的大小
+
+  // ========== 4. 逐层前向传播（支持 chunk 处理） ==========
+  // 如果序列长度小于等于 chunksize，直接处理
+  // 否则将序列分成多个 chunk，每个 chunk 单独处理
+  if (seq_len <= chunksize) {
+    // 短序列：直接处理
+    // 依次通过所有 Transformer 解码器层
+    // 每一层包含：Pre-Norm、自注意力、残差连接、Pre-Norm、MLP、残差连接
+    // 输出形状: [B, S, hidden_size]
+    for (int i = 0; i < blocks.size(); i++) {
+      auto& block = blocks[i];
+      // 记录每层开始时间到全局 tracer
+      globalTracer().record<LayerBeginEvent>(i, seq_len, token_idx);
+      x = block(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0];
+      // 记录每层完成时间到全局 tracer
+      globalTracer().record<LayerCompleteEvent>(i, seq_len, token_idx);
+    }
+  } else {
+    // 长序列：分 chunk 处理
+    // 计算 chunk 数量
+    int num_chunks = (seq_len + chunksize - 1) / chunksize;  // 向上取整
+    std::vector<Tensor> chunk_outputs;
+    chunk_outputs.reserve(num_chunks);
+
+    // 逐个处理每个 chunk
+    for (int chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
+      // 计算当前 chunk 的起始和结束位置
+      int chunk_start = chunk_idx * chunksize;
+      int chunk_end = std::min(chunk_start + chunksize, seq_len);
+      int chunk_len = chunk_end - chunk_start;
+
+      // 切片获取当前 chunk 的输入和位置编码
+      auto x_chunk = x[{kAll, {chunk_start, chunk_end}, kAll}];
+      auto sin_chunk = llm_embedding_sin[{kAll, {chunk_start, chunk_end}, kAll}];
+      auto cos_chunk = llm_embedding_cos[{kAll, {chunk_start, chunk_end}, kAll}];
+
+      // 对当前 chunk 进行逐层前向传播
+      // KV cache 会自动累积，保持上下文连续性
+      for (int i = 0; i < blocks.size(); i++) {
+        auto& block = blocks[i];
+        // 记录每层开始时间到全局 tracer
+        globalTracer().record<LayerBeginEvent>(i, chunk_len, token_idx);
+        x_chunk = block(x_chunk, sin_chunk, cos_chunk, kv_cache)[0];
+        // 记录每层完成时间到全局 tracer
+        globalTracer().record<LayerCompleteEvent>(i, chunk_len, token_idx);
+      }
+
+      // 保存当前 chunk 的输出
+      chunk_outputs.push_back(x_chunk);
+      token_idx += chunk_len;
+    }
+
+    // 合并所有 chunk 的输出
+    x = nn::functional::concat(chunk_outputs, 1);  // 在序列维度（dim=1）上合并
   }
 
   // ========== 5. 最终归一化 ==========
@@ -373,7 +420,8 @@ ARGenerationOutputPast Qwen3ForCausalLM::forward(const ARGenerationOutputPast& i
   // 模型会依次通过：嵌入层 -> 多个解码器层 -> 最终归一化
   // 输出形状: [B, S, hidden_size]
   sequence = llm(sequence, llm_embedding_sin, llm_embedding_cos, 
-                 AnyValue(&kv_cache_), AnyValue(token_counter_++))[0];
+                 AnyValue(&kv_cache_), AnyValue(token_counter_))[0];
+  token_counter_ += seq_len;
 
   // ========== 6. 提取最后一个 token 的表示 ==========
   // 对于自回归生成，通常只需要最后一个位置的隐藏状态
