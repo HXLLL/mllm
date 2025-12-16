@@ -308,6 +308,8 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   // for (auto& block : blocks) { 
   for (int i = 0; i < blocks.size(); i++) {
     auto& block = blocks[i];
+    // 记录每层开始时间到全局 tracer
+    globalTracer().record<LayerBeginEvent>(i, seq_len, token_idx);
     x = block(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0];
     // 记录每层完成时间到全局 tracer
     globalTracer().record<LayerCompleteEvent>(i, seq_len, token_idx);

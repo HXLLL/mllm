@@ -12,6 +12,29 @@
 
 namespace mllm::models::qwen3 {
 
+// ========== 层开始事件 ==========
+// 用于记录每层开始的时间戳，便于性能分析
+class LayerBeginEvent : public Event {
+public:
+  LayerBeginEvent(int layer_idx, int seq_len, int token_idx)
+    : layer_idx_(layer_idx), seq_len_(seq_len), token_idx_(token_idx) {}
+
+  [[nodiscard]] std::map<std::string, std::string> toData() const override {
+    return {
+      {"layer_idx", std::to_string(layer_idx_)},
+      {"seq_len", std::to_string(seq_len_)},
+      {"token_idx", std::to_string(token_idx_)}
+    };
+  }
+
+  [[nodiscard]] std::string typeName() const override { return "LayerBegin"; }
+
+private:
+  int layer_idx_;
+  int seq_len_;
+  int token_idx_;  // 当前是第几个 token 的推理
+};
+
 // ========== 层完成事件 ==========
 // 用于记录每层完成的时间戳，便于性能分析
 class LayerCompleteEvent : public Event {

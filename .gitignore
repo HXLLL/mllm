@@ -38,3 +38,5 @@ autotuner.log
 /models/
 # Keep source model adapters tracked
 !tools/mllm-llm-benchmark/models/
+
+/data/
