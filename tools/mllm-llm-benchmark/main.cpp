@@ -10,6 +10,7 @@
 #include <mllm/utils/Argparse.hpp>
 #include <mllm/utils/CPUArchHelper.hpp>
 #include <mllm/utils/PlatformRTHelper.hpp>
+#include <mllm/utils/Tracing.hpp>
 
 #define STRINGIFY_INTERNAL(x) #x
 #define STRINGIFY(x) STRINGIFY_INTERNAL(x)
@@ -157,4 +158,15 @@ MLLM_MAIN({
   mllm::print("\n========================================");
   mllm::print("Benchmark Tests Completed");
   mllm::print("========================================");
+
+  // 导出 tracing 数据到 CSV 文件
+  if (mllm::globalTracer().size() > 0) {
+    std::string csv_path = "layer_trace.csv";
+    if (mllm::globalTracer().exportToCSV(csv_path)) {
+      mllm::print("Layer tracing data exported to:", csv_path);
+      mllm::print("Total events recorded:", mllm::globalTracer().size());
+    } else {
+      mllm::print("Failed to export tracing data to CSV");
+    }
+  }
 })
