@@ -204,6 +204,9 @@ class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
 
   nn::StaticCache& kvCache();
 
+  // 重置 token 计数器（在 clear/reset 时调用）
+  void resetTokenCounter() { token_counter_ = 0; }
+
  private:
   const Qwen3Config& cfg;
   Qwen3Text llm;

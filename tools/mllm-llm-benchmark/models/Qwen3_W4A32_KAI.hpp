@@ -95,6 +95,8 @@ class Qwen3_W4A32_KAI_Benchmark final : public BenchmarkTemplate {
     
     // Clear KV cache by resetting sequence count
     model_->kvCache().setCurrentSeqCnt(0);
+    // Reset token counter for tracing
+    model_->resetTokenCounter();
   }
 
   BenchmarkTemplateResult run(int32_t pp, int32_t tg) override {
