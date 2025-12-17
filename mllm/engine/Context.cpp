@@ -8,6 +8,7 @@
 #include "mllm/engine/SessionTCB.hpp"
 #include "mllm/engine/DispatcherManager.hpp"
 #include "mllm/tracy_perf/Tracy.hpp"
+#include "mllm/utils/Tracing.hpp"
 
 namespace mllm {
 
@@ -30,6 +31,9 @@ Context::Context() {
       .numa_policy = false,
       .num_threads = 3,
   });
+
+  // 4. Add tracer
+  tracer_ = std::make_shared<Tracer>();
 }
 
 void Context::registerBackend(const Backend::ptr_t& new_backend) { backends_.reg(new_backend->device(), new_backend); }

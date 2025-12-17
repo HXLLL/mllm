@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
 
 #include <nlohmann/json.hpp>
 
@@ -15,8 +16,11 @@
 #include "mllm/engine/MemoryManager.hpp"
 #include "mllm/backends/base/Backend.hpp"
 #include "mllm/backends/base/PluginSystem.hpp"
+#include "mllm/utils/Tracing.hpp"
 
 namespace mllm {
+
+class Tracer;
 
 class Context {
  public:
@@ -33,6 +37,8 @@ class Context {
   inline MemoryManager::ptr_t memoryManager() { return memory_manager_; }
 
   inline DispatcherManager::ptr_t dispatcherManager() { return dispatcher_manager_; }
+
+  inline Tracer::ptr_t tracer() { return tracer_; }
 
   std::vector<Tensor> buildOpAndSubmitTask(OpTypes op_type, const BaseOpOptionsBase& base_options,
                                            const std::vector<Tensor>& inputs, DeviceTypes special_device = kDeviceTypes_End);
@@ -95,6 +101,8 @@ class Context {
 
   int print_precision_ = 4;
   int print_max_elements_per_dim_ = 12;
+
+  Tracer::ptr_t tracer_ = nullptr;
 };
 
 }  // namespace mllm

@@ -30,6 +30,8 @@ protected:
 
 class Tracer {
 public:
+  using ptr_t = std::shared_ptr<Tracer>;
+
   explicit Tracer(size_t initial_capacity = 1024) 
     : start_time_(std::chrono::high_resolution_clock::now()) {
     events_.reserve(initial_capacity);
@@ -127,11 +129,5 @@ private:
   std::chrono::high_resolution_clock::time_point start_time_;
   bool enabled_ = false;
 };
-
-// 全局 Tracer 访问函数
-inline Tracer& globalTracer() {
-  static Tracer tracer;
-  return tracer;
-}
 
 } // namespace mllm

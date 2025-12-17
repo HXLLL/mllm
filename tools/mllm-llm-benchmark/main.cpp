@@ -84,7 +84,7 @@ MLLM_MAIN({
   
   // Enable tracing after warmup if trace file is specified
   if (trace_file.isSet()) {
-    mllm::globalTracer().enable();
+    mllm::Context::instance().tracer()->enable();
     mllm::print("Tracing enabled, output will be written to:", trace_file.get());
   }
 
@@ -180,10 +180,10 @@ MLLM_MAIN({
   mllm::print("========================================");
 
   // 导出 tracing 数据到 CSV 文件（如果启用了 tracing）
-  if (trace_file.isSet() && mllm::globalTracer().size() > 0) {
-    if (mllm::globalTracer().exportToCSV(trace_file.get())) {
+  if (trace_file.isSet() && mllm::Context::instance().tracer()->size() > 0) {
+    if (mllm::Context::instance().tracer()->exportToCSV(trace_file.get())) {
       mllm::print("Layer tracing data exported to:", trace_file.get());
-      mllm::print("Total events recorded:", mllm::globalTracer().size());
+      mllm::print("Total events recorded:", mllm::Context::instance().tracer()->size());
     } else {
       mllm::print("Failed to export tracing data to CSV");
     }

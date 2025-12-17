@@ -194,7 +194,7 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   key_states = key_states_new;
   value_states = value_states_new;
 
-  globalTracer().record<KVCacheCompleteEvent>(layer_idx_, S, 0);
+  Context::instance().tracer()->record<KVCacheCompleteEvent>(layer_idx_, S, 0);
 
   // ========== 9. 计算注意力分数 ==========
   // 计算 Q @ K^T，得到注意力权重矩阵
@@ -253,7 +253,7 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   // 输出形状: [B, S, hidden_size]
   x = self_attn_(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0];
 
-  globalTracer().record<SelfAttentionCompleteEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
+  Context::instance().tracer()->record<SelfAttentionCompleteEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
 
   // ========== 4. 残差连接（注意力分支） ==========
   // 将注意力输出与原始输入相加，实现残差连接
@@ -267,14 +267,14 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   // 输出形状: [B, S, hidden_size]
   x = post_attention_layer_norm_(tmp);
 
-  globalTracer().record<MLPBeginEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
+  Context::instance().tracer()->record<MLPBeginEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
   // ========== 6. MLP 前向传播 ==========
   // 通过 MLP（多层感知机）进行非线性变换
   // MLP 包含 gate_proj、SiLU 激活、up_proj、down_proj 等操作
   // 输出形状: [B, S, hidden_size]
   x = mlp_(x)[0];
 
-  globalTracer().record<MLPCompleteEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
+  Context::instance().tracer()->record<MLPCompleteEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
 
   // ========== 7. 残差连接（MLP 分支） ==========
   // 将 MLP 输出与注意力分支的输出相加，完成第二个残差连接
@@ -325,10 +325,10 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
     for (int i = 0; i < blocks.size(); i++) {
       auto& block = blocks[i];
       // 记录每层开始时间到全局 tracer
-      globalTracer().record<LayerBeginEvent>(i, seq_len, token_idx);
+      Context::instance().tracer()->record<LayerBeginEvent>(i, seq_len, token_idx);
       x = block(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0];
       // 记录每层完成时间到全局 tracer
-      globalTracer().record<LayerCompleteEvent>(i, seq_len, token_idx);
+      Context::instance().tracer()->record<LayerCompleteEvent>(i, seq_len, token_idx);
     }
 
     // ========== 4.3 最终归一化 ==========
@@ -368,10 +368,10 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
       for (int i = 0; i < blocks.size(); i++) {
         auto& block = blocks[i];
         // 记录每层开始时间到全局 tracer
-        globalTracer().record<LayerBeginEvent>(i, chunk_len, token_idx);
+        Context::instance().tracer()->record<LayerBeginEvent>(i, chunk_len, token_idx);
         x_chunk = block(x_chunk, sin_chunk, cos_chunk, kv_cache)[0];
         // 记录每层完成时间到全局 tracer
-        globalTracer().record<LayerCompleteEvent>(i, chunk_len, token_idx);
+        Context::instance().tracer()->record<LayerCompleteEvent>(i, chunk_len, token_idx);
       }
 
       // 保存当前 chunk 的输出
