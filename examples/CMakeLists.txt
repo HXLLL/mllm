@@ -15,3 +15,4 @@ add_subdirectory(qwen3_service)
 #  add_subdirectory(tracy_example)
 #endif()
 #
+add_subdirectory(zenfs)
