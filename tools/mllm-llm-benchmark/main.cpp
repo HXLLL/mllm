@@ -31,6 +31,14 @@ MLLM_MAIN({
   auto& chunksize = mllm::Argparse::add<int32_t>("-cs|--chunksize").help("Chunk size for sequence processing (default: 1)");
   mllm::Argparse::parse(argc, argv);
 
+  // Set CPU operation threads if specified
+  if (num_threads.isSet() && num_threads.get() > 0) {
+    mllm::Context::instance().setCpuOpThreads(num_threads.get());
+    mllm::print("CPU operation threads set to:", num_threads.get());
+  } else {
+    mllm::print("Using default CPU operation threads:", mllm::Context::instance().getCpuOpThreads());
+  }
+
   // Print Build Version
   mllm::print("MLLM Build Version :", STRINGIFY(MLLM_GIT_COMMIT_HASH));
 
@@ -56,6 +64,24 @@ MLLM_MAIN({
   mllm::print("AVX512DQ           :", mllm::cpu::hasAVX512DQ());
   mllm::print("AVX512VL           :", mllm::cpu::hasAVX512VL());
   mllm::print("FMA                :", mllm::cpu::hasFMA());
+
+  // Print Threading Implementation Info
+  mllm::print("\n========== Threading Implementation ==========");
+#ifdef MLLM_KERNEL_USE_THREADS
+  #ifdef MLLM_KERNEL_THREADS_VENDOR_APPLE_GCD
+    mllm::print("Threading Backend  : Apple Grand Central Dispatch (GCD)");
+  #elif defined(MLLM_KERNEL_THREADS_VENDOR_OPENMP)
+    mllm::print("Threading Backend  : OpenMP");
+  #elif defined(MLLM_KERNEL_USE_THREADS_VENDOR_MLLM)
+    mllm::print("Threading Backend  : MLLM Thread Pool");
+  #else
+    mllm::print("Threading Backend  : Unknown (threading enabled but no vendor specified)");
+  #endif
+#else
+  mllm::print("Threading Backend  : Disabled (Sequential execution)");
+#endif
+  mllm::print("CPU Op Threads     :", mllm::Context::instance().getCpuOpThreads());
+  mllm::print("===============================================\n");
 
   // Create benchmark
   mllm::print("Create Benchmark: ", model_name.get());
