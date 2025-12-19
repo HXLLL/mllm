@@ -5,70 +5,101 @@
 
 #include "mllm/nn/lmcache/StaticCache.hpp"
 #include "mllm/core/Tensor.hpp"
-#include <string>
+#include <filesystem>
+#include <memory>
 
 namespace mllm::nn {
 
+/* Options for creating a PersistentCache. */
+struct PersistentCacheOptions {
+  std::filesystem::path working_dir = "./kvcache";
+  int32_t max_cache_length = 1024;
+  int32_t layer_nums = 1;
+  int32_t q_heads = 1;
+  int32_t kv_heads = 1;
+  int32_t kv_dims = 1;
+  DataTypes k_dtype = DataTypes::kFloat16;
+  DataTypes v_dtype = DataTypes::kFloat16;
+  DeviceTypes device_type = DeviceTypes::kCPU;
+};
+
+/* A persistent KV cache that can be saved to and restored from disk.
+ *
+ * Directory structure:
+ *   working_dir/
+ *     metadata.json   - Configuration and state information
+ *     kv.bin          - Binary KV cache data
+ *
+ * Usage:
+ *   auto cache = PersistentCache::create(options);
+ *   // ... use the cache ...
+ *   cache->sync();
+ *   // Later: auto recovered = PersistentCache::recover("./kvcache");
+ */
 class PersistentCache : public AbstractStaticCache {
  public:
-  PersistentCache(const std::string& cache_file_path, int32_t max_cache_length, int32_t layer_nums,
-                  int32_t q_heads, int32_t kv_heads, int32_t kv_dims, DataTypes k_dtype, DataTypes v_dtype,
-                  DeviceTypes device_type = kCPU);
+  using ptr_t = std::shared_ptr<PersistentCache>;
+
+  /* Creates a new PersistentCache in memory. */
+  [[nodiscard]] static ptr_t create(const PersistentCacheOptions& options);
+
+  /* Recovers a PersistentCache from disk. Returns nullptr on failure. */
+  [[nodiscard]] static ptr_t recover(const std::filesystem::path& working_dir);
 
   ~PersistentCache();
 
-  void setCurrentSeqCnt(int32_t seq) override;
+  // Non-copyable, non-movable (mmap resources)
+  PersistentCache(const PersistentCache&) = delete;
+  PersistentCache& operator=(const PersistentCache&) = delete;
+  PersistentCache(PersistentCache&&) = delete;
+  PersistentCache& operator=(PersistentCache&&) = delete;
 
-  void clearCache() override;
+  /* Synchronizes the cache to disk. Returns true on success. */
+  [[nodiscard]] bool sync();
 
+  // AbstractStaticCache interface
   [[nodiscard]] int32_t getCurrentSeqCnt(int32_t layer_idx) const override;
-
   [[nodiscard]] int32_t getLayerNums() const override { return layer_nums_; }
-
+  void setCurrentSeqCnt(int32_t seq) override;
+  void clearCache() override;
   std::array<Tensor, 2> updateKVCache(int32_t layer_idx, Tensor k, Tensor v) override;
 
-  [[nodiscard]] inline Tensor getKCacheBuffer(int32_t layer_idx) const { return k_cache_[layer_idx]; }
+  [[nodiscard]] bool isDirty() const noexcept { return is_dirty_; }
+  [[nodiscard]] const std::filesystem::path& workingDir() const noexcept { return working_dir_; }
 
-  [[nodiscard]] inline Tensor getVCacheBuffer(int32_t layer_idx) const { return v_cache_[layer_idx]; }
+  explicit PersistentCache(const PersistentCacheOptions& options);
 
  private:
-  void initializeFile();
-  void mapFile();
-  void unmapFile();
-  [[nodiscard]] size_t calculateFileSize() const;
-  [[nodiscard]] void* getCacheDataPtr(int32_t layer_idx, bool is_k) const;
+  [[nodiscard]] bool initMmap();
+  void initTensorsFromMmap();
+  [[nodiscard]] bool saveMetadata() const;
 
-  std::string cache_file_path_;
-  DeviceTypes device_type_;
-  DataTypes k_dtype_;
-  DataTypes v_dtype_;
-  int32_t max_cache_length_;
-  int32_t layer_nums_;
-  int32_t q_heads_;
-  int32_t kv_heads_;
-  int32_t kv_dims_;
+  [[nodiscard]] std::filesystem::path metadataPath() const { return working_dir_ / "metadata.json"; }
+  [[nodiscard]] std::filesystem::path cachePath() const { return working_dir_ / "kv.bin"; }
+  [[nodiscard]] size_t cacheBytes() const;
 
-  std::vector<Tensor> k_cache_;
-  std::vector<Tensor> v_cache_;
-  std::vector<int32_t> current_seq_cnt_;
+  // Configuration
+  std::filesystem::path working_dir_;
+  DeviceTypes device_type_ = DeviceTypes::kCPU;
+  DataTypes k_dtype_ = DataTypes::kFloat16;
+  DataTypes v_dtype_ = DataTypes::kFloat16;
+  int32_t max_cache_length_ = 0;
+  int32_t layer_nums_ = 0;
+  int32_t q_heads_ = 0;
+  int32_t kv_heads_ = 0;
+  int32_t kv_dims_ = 0;
 
-  void* mapped_memory_ = nullptr;
-  size_t mapped_size_ = 0;
+  // mmap state
   int fd_ = -1;
-  bool file_created_ = false;
+  void* mapped_ptr_ = nullptr;
+  size_t map_size_ = 0;
 
-  // File format:
-  // Header: [layer_nums(4), max_cache_length(4), q_heads(4), kv_heads(4), kv_dims(4), k_dtype(4), v_dtype(4), reserved(4)]
-  // For each layer:
-  //   [current_seq_cnt(4)]
-  //   [k_cache_data]
-  //   [v_cache_data]
-  static constexpr size_t HEADER_SIZE = 32;  // 8 * 4 bytes
-  [[nodiscard]] size_t getLayerOffset(int32_t layer_idx) const;
-  [[nodiscard]] size_t getKCacheOffset(int32_t layer_idx) const;
-  [[nodiscard]] size_t getVCacheOffset(int32_t layer_idx) const;
-  [[nodiscard]] size_t getSingleCacheSize() const;
+  // Cache state
+  Tensor k_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
+  Tensor v_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
+  std::vector<int32_t> seq_cnt_;        // Current sequence count per layer
+  std::vector<int32_t> saved_seq_cnt_;  // Persisted sequence count per layer
+  bool is_dirty_ = false;
 };
 
 }  // namespace mllm::nn
-
