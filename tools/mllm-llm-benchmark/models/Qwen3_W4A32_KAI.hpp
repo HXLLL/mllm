@@ -8,14 +8,16 @@
 
 #include "BenchmarkTemplate.hpp"
 #include <mllm/mllm.hpp>
-#include <mllm/models/qwen3/modeling_qwen3_intermittent.hpp>
+#include <mllm/models/qwen3_i/modeling_qwen3_i.hpp>
 #include <mllm/models/qwen3/configuration_qwen3.hpp>
 
+using Qwen3Config = mllm::models::qwen3::Qwen3Config;
+using Qwen3ForCausalLM = mllm::models::qwen3_i::Qwen3ForCausalLM;
 class Qwen3_W4A32_KAI_Benchmark final : public BenchmarkTemplate {
  public:
   void init(const std::string& cfg_path, const std::string& model_path, int32_t cache_length) override {
     // Load config
-    config_ = std::make_unique<mllm::models::qwen3::Qwen3Config>(cfg_path);
+    config_ = std::make_unique<Qwen3Config>(cfg_path);
     
     // Override cache length if specified
     if (cache_length > 0) {
@@ -23,7 +25,7 @@ class Qwen3_W4A32_KAI_Benchmark final : public BenchmarkTemplate {
     }
     
     // Create model
-    model_ = std::make_unique<mllm::models::qwen3::Qwen3ForCausalLM>(*config_);
+    model_ = std::make_unique<Qwen3ForCausalLM>(*config_);
     
     // Load weights
     auto param = mllm::load(model_path, mllm::ModelFileVersion::kV2);
@@ -175,6 +177,6 @@ class Qwen3_W4A32_KAI_Benchmark final : public BenchmarkTemplate {
   }
 
  private:
-  std::unique_ptr<mllm::models::qwen3::Qwen3Config> config_;
-  std::unique_ptr<mllm::models::qwen3::Qwen3ForCausalLM> model_;
+  std::unique_ptr<Qwen3Config> config_;
+  std::unique_ptr<Qwen3ForCausalLM> model_;
 };
