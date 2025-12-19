@@ -16,3 +16,4 @@ add_subdirectory(qwen3_service)
 #endif()
 #
 add_subdirectory(zenfs)
+add_subdirectory(persistent_cache)
