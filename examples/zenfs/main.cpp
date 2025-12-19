@@ -1,15 +1,24 @@
 #include <iostream>
 #include <cstring>
+#include <fstream>
+#include <filesystem>
+#include <csignal>
+#include <atomic>
+#include <thread>
+#include <chrono>
 #include "mllm/mllm.hpp"
 #include "mllm/engine/prefix_cache/ZenFS.hpp"
 
-using namespace mllm::prefix_cache;
+using mllm::prefix_cache::ZenFileSystem;
+using mllm::prefix_cache::ZenFileSystemOptions;
+using mllm::prefix_cache::ZenFSBlobMMapType;
+using mllm::prefix_cache::vp_addr_t;
 
 int main(int argc, char *argv[]) {
   // Initialize ZenFS
   ZenFileSystem zenfs;
   ZenFileSystemOptions options;
-  options.record = false;
+  options.record = true;  // Enable persistence
   options.working_dir = "./zenfs_working_dir";
   options.blob_bits_size = 20;
   options.page_bits = 7;  // 128 pages per blob
@@ -22,8 +31,19 @@ int main(int argc, char *argv[]) {
 
   mllm::initializeContext();
   
-  zenfs.initialize(options);
-  std::cout << "ZenFS initialized successfully" << std::endl;
+  // Try to recover previous data if index.json exists
+  if (std::filesystem::exists(options.working_dir + "/index.json")) {
+    try {
+      zenfs.recover(options.working_dir);
+      std::cout << "Recovered previous ZenFS state" << std::endl;
+    } catch (...) {
+      std::cout << "Could not recover previous state, starting fresh" << std::endl;
+      zenfs.initialize(options);
+    }
+  } else {
+    zenfs.initialize(options);
+    std::cout << "ZenFS initialized successfully" << std::endl;
+  }
   
   // Allocate a block
   vp_addr_t block_addr = zenfs.malloc();
@@ -52,6 +72,9 @@ int main(int argc, char *argv[]) {
     std::cout << "Read value: " << value << std::endl;
     *int_ptr = value + 1;
     std::cout << "Wrote value: " << (value + 1) << std::endl;
+    
+    zenfs.finalize();
+
     // Sleep a little to avoid busy spinning
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
   }
