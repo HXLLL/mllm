@@ -186,23 +186,20 @@ class CMakeBuildTask(Task):
         self.CMAKE_COMMAND = [
             "cmake",
             "--build",
-            os.path.join(PROJECT_ROOT_PATH, self.config.get("cmake_cfg_path", "build"))
+            os.path.join(PROJECT_ROOT_PATH, self.config.get("cmake_cfg_path", "build")),
         ]
 
     def run(self):
         logging.info("CMake build Task Start...")
         targets = self.config.get("targets", None)
+        sub_command = self.CMAKE_COMMAND
         if targets:
             for target in targets:
-                sub_command = self.make_command_str(
-                    self.CMAKE_COMMAND.extend(["--target", target])
-                )
-                logging.info(sub_command)
-                throw_error_if_failed(os.system(sub_command))
-        else:
-            sub_command = self.make_command_str(self.CMAKE_COMMAND)
-            logging.info(sub_command)
-            throw_error_if_failed(os.system(sub_command))
+                sub_command.extend(["--target", target])
+        sub_command.extend(["--", "-j", "2"])
+        sub_command = self.make_command_str(self.CMAKE_COMMAND)
+        logging.info(sub_command)
+        throw_error_if_failed(os.system(sub_command))
 
 
 class CMakeInstallTask(Task):
