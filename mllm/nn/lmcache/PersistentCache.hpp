@@ -64,6 +64,12 @@ class PersistentCache : public AbstractStaticCache {
   void clearCache() override;
   std::array<Tensor, 2> updateKVCache(int32_t layer_idx, Tensor k, Tensor v) override;
 
+  /* Get current KV cache view without modifying seq_cnt. */
+  [[nodiscard]] std::array<Tensor, 2> getKVCache(int32_t layer_idx) const;
+
+  /* Mark cache as dirty (call after directly modifying cache data). */
+  void markDirty() noexcept { is_dirty_ = true; }
+
   [[nodiscard]] bool isDirty() const noexcept { return is_dirty_; }
   [[nodiscard]] const std::filesystem::path& workingDir() const noexcept { return working_dir_; }
 
