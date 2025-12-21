@@ -17,8 +17,8 @@ int main() {
   constexpr int layer_nums = 1;
   constexpr int q_heads = 1;
   constexpr int kv_heads = 1;
-  constexpr int kv_dim = 1;  // 一行，只有一个元素
-  const std::filesystem::path cache_dir = "./example_cache";
+  constexpr int kv_dim = 1024;  // 调整使得一个token的KV占据一个page (4KB): 2 * (4 * 128 * 4) = 4096 bytes
+  const std::filesystem::path cache_dir = "./data/test_cache";
 
   // 1. 启动时，如果没有目标文件夹，则创建，否则恢复
   nn::PersistentCache::ptr_t cache;
@@ -55,64 +55,102 @@ int main() {
   while (true) {
     int32_t cur_seq = cache->getCurrentSeqCnt(0);
     
-    // 读取当前缓存的所有数据
-    // 通过创建一个单元素tensor来获取view（这会追加一个0，但我们可以读取之前的数据）
-    auto k_temp = Tensor::zeros({1, kv_heads, 1, kv_dim}, kFloat32, kCPU);
-    auto v_temp = Tensor::zeros({1, kv_heads, 1, kv_dim}, kFloat32, kCPU);
-    auto [k_view, v_view] = cache->updateKVCache(0, k_temp, v_temp);
+    // 获取当前缓存的view（不修改seq_cnt）
+    auto [k_view, v_view] = cache->getKVCache(0);
     
-    // 现在k_view包含了所有数据（包括刚追加的0）
+    // 计算新值：查找第一个0，或者使用最后一个值+1
     float new_value = 1.0f;
     float prev_value = 0.0f;
     bool found_zero = false;
+    int32_t update_token_pos = -1;  // 要更新的token位置（-1表示添加新token）
     
-    if (k_view.numel() > 1) {
+    if (k_view.numel() > 0) {
       auto* k_ptr = k_view.ptr<float>();
-      // 查找第一个0（不包括最后一个，因为那是我们刚追加的）
-      for (int32_t i = 0; i < k_view.numel() - 1; ++i) {
-        if (std::abs(k_ptr[i]) < 1e-6) {  // 找到第一个0
-          found_zero = true;
-          // 获取上一个元素的值
-          if (i > 0) {
-            prev_value = k_ptr[i - 1];
-            new_value = prev_value + 1.0f;
-          } else {
-            new_value = 1.0f;  // 第一个元素为1
+      const int32_t token_size = kv_heads * kv_dim;
+      const int32_t num_tokens = cur_seq;
+      
+      // 查找第一个包含0的token
+      for (int32_t token_idx = 0; token_idx < num_tokens; ++token_idx) {
+        const int32_t token_offset = token_idx * token_size;
+        bool token_has_zero = false;
+        
+        // 检查这个token是否包含0
+        for (int32_t i = 0; i < token_size; ++i) {
+          if (std::abs(k_ptr[token_offset + i]) < 1e-6) {
+            token_has_zero = true;
+            found_zero = true;
+            update_token_pos = token_idx;
+            
+            // 获取上一个token的值来计算新值
+            if (token_idx > 0) {
+              prev_value = k_ptr[(token_idx - 1) * token_size];
+              new_value = prev_value + 1.0f;
+            } else {
+              new_value = 1.0f;  // 第一个token为1
+            }
+            break;
           }
-          break;
         }
-        prev_value = k_ptr[i];  // 更新prev_value
+        if (token_has_zero) break;
+        
+        // 记录最后一个token的值
+        if (token_idx == num_tokens - 1) {
+          prev_value = k_ptr[token_offset];
+        }
       }
       
-      // 如果没找到0，新值 = 最后一个元素 + 1
-      if (!found_zero && k_view.numel() > 1) {
-        prev_value = k_ptr[k_view.numel() - 2];  // 倒数第二个（排除刚追加的0）
+      // 如果没找到0，新值 = 最后一个token的值 + 1，添加新token
+      if (!found_zero && num_tokens > 0) {
+        prev_value = k_ptr[(num_tokens - 1) * token_size];
         new_value = prev_value + 1.0f;
       }
     }
     
-    // 回退seq_cnt（因为我们刚才追加了一个临时值）
-    cache->setCurrentSeqCnt(cur_seq);
-    
-    // 3. 创建tensor大小为一行，更新缓存
-    auto k = Tensor::fromVector(std::vector<float>{new_value}, {1, kv_heads, 1, kv_dim}, kFloat32, kCPU);
-    auto v = Tensor::fromVector(std::vector<float>{new_value}, {1, kv_heads, 1, kv_dim}, kFloat32, kCPU);
-    
-    auto [k_cached, v_cached] = cache->updateKVCache(0, k, v);
+    // 直接更新缓存中的数据
+    if (found_zero && update_token_pos >= 0) {
+      // 更新现有token的KV：直接修改view中的数据
+      auto* k_ptr = k_view.ptr<float>();
+      auto* v_ptr = v_view.ptr<float>();
+      const int32_t token_size = kv_heads * kv_dim;
+      const int32_t offset = update_token_pos * token_size;
+      
+      // 直接修改view中的数据
+      for (int32_t i = 0; i < token_size; ++i) {
+        k_ptr[offset + i] = new_value;
+        v_ptr[offset + i] = new_value;
+      }
+      cache->markDirty();  // 标记为dirty
+    } else {
+      // 添加新token：先增加seq_cnt，然后获取包含新位置的view并直接修改
+      cache->setCurrentSeqCnt(cur_seq + 1);
+      auto [k_new_view, v_new_view] = cache->getKVCache(0);
+      
+      // 直接修改新token位置的数据
+      auto* k_ptr = k_new_view.ptr<float>();
+      auto* v_ptr = v_new_view.ptr<float>();
+      const int32_t token_size = kv_heads * kv_dim;
+      const int32_t new_token_offset = cur_seq * token_size;
+      
+      for (int32_t i = 0; i < token_size; ++i) {
+        k_ptr[new_token_offset + i] = new_value;
+        v_ptr[new_token_offset + i] = new_value;
+      }
+      cache->markDirty();  // 标记为dirty
+    }
     
     // 4. 输出所有元素
     print("\n=== Iteration ===");
     print("Current seq count:", cache->getCurrentSeqCnt(0));
     
-    // 读取并输出所有元素（通过返回的view）
+    // 获取更新后的view用于输出
+    auto [k_cached, v_cached] = cache->getKVCache(0);
     if (k_cached.numel() > 0) {
       auto* k_ptr = k_cached.ptr<float>();
-      print("Cache values:");
+      std::string values_str = "Cache values:";
       for (int32_t i = 0; i < k_cached.numel(); ++i) {
-        if (i > 0) print(" ");
-        print(k_ptr[i]);
+        values_str += " " + std::to_string(k_ptr[i]);
       }
-      print("");
+      print(values_str);
     }
     
     // 5. 调用sync
