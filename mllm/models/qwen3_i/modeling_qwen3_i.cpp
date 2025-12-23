@@ -11,39 +11,15 @@ namespace mllm::models::qwen3_i {
 
 
 std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  // ========== 1. Gate 投影和激活 ==========
-  // 通过 gate_proj 将输入投影到中间维度，然后应用 SiLU 激活函数
-  // 输入形状: [B, S, hidden_size]
-  // 输出形状: [B, S, intermediate_size]
   auto x = gate_proj_(inputs[0]);
   x = silu_(x);
-
-  // ========== 2. Up 投影 ==========
-  // 通过 up_proj 将输入投影到中间维度（与 gate 并行）
-  // 输入形状: [B, S, hidden_size]
-  // 输出形状: [B, S, intermediate_size]
   auto y = up_proj_(inputs[0]);
-
-  // ========== 3. 门控机制 ==========
-  // 将 gate 激活后的结果与 up 投影结果逐元素相乘
-  // 这是 SwiGLU (Swish-Gated Linear Unit) 激活函数的核心
-  // 输出形状: [B, S, intermediate_size]
   x = x * y;
-
-  // ========== 4. 输出投影 ==========
-  // 通过 down_proj 将中间维度投影回 hidden_size
-  // 输入形状: [B, S, intermediate_size]
-  // 输出形状: [B, S, hidden_size]
   x = down_proj_(x);
-
   return {x};
 }
 
 std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  // ========== 1. 获取输入参数 ==========
-  // x: 输入张量，形状为 [B, S, hidden_size]
-  // llm_embedding_sin/cos: RoPE 位置编码的正弦和余弦值
-  // past_kv_cache: 用于存储历史 K、V 状态的缓存，支持增量解码
   auto x = inputs[0];
   auto llm_embedding_sin = inputs[1];
   auto llm_embedding_cos = inputs[2];
@@ -52,13 +28,10 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   // ========== 2. 线性投影生成 Q、K、V ==========
   // 通过三个独立的线性层将输入投影为 Query、Key、Value
   // 输出形状: [B, S, H * D] (对于 Q) 或 [B, S, KV_H * D] (对于 K、V)
-  // 其中 H 是注意力头数，KV_H 是键值头数（支持 GQA/MQA），D 是每个头的维度
   auto query_states = q_proj_(x);
   auto key_states = k_proj_(x);
   auto value_states = v_proj_(x);
 
-  // ========== 3. 获取批次大小和序列长度 ==========
-  // 从输入张量的形状中提取维度信息，用于后续的 reshape 操作
   int B = inputs[0].shape()[0];  // Batch size: 批次大小
   int S = inputs[0].shape()[1];  // Sequence length: 序列长度
 
@@ -70,9 +43,7 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   key_states = key_states.view({B, S, num_key_value_heads_, head_dim_});
   value_states = value_states.view({B, S, num_key_value_heads_, head_dim_});
 
-  // ========== 5. 对 Q 和 K 进行 RMSNorm 归一化 ==========
-  // Qwen3 使用 RMSNorm 对 Query 和 Key 进行归一化，提高训练稳定性
-  // 输出形状保持不变: [B, S, H, D]
+  // [B, S, H, D]
   query_states = rms_norm_q_(query_states);
   key_states = rms_norm_k_(key_states);
 

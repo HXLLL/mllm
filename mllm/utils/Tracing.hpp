@@ -18,7 +18,7 @@ public:
   virtual ~Event() = default;
   
   [[nodiscard]] virtual std::map<std::string, std::string> toData() const = 0;
-  [[nodiscard]] virtual std::string typeName() const = 0;
+  [[nodiscard]] virtual const char* typeName() const noexcept = 0;
   
   [[nodiscard]] std::chrono::high_resolution_clock::time_point timestamp() const {
     return timestamp_;

@@ -38,7 +38,7 @@ class LayerBeginEvent : public LayerEventBase {
 public:
   LayerBeginEvent(int layer_idx, int seq_len, int token_idx)
     : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "LayerBegin"; }
+  [[nodiscard]] constexpr const char* typeName() const noexcept override { return "LayerBegin"; }
 };
 
 // ========== 层完成事件 ==========
@@ -46,7 +46,7 @@ class LayerCompleteEvent : public LayerEventBase {
 public:
   LayerCompleteEvent(int layer_idx, int seq_len, int token_idx)
     : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "LayerComplete"; }
+  [[nodiscard]] constexpr const char* typeName() const noexcept override { return "LayerComplete"; }
 };
 
 // ========== KV Cache 完成事件 ==========
@@ -54,7 +54,7 @@ class KVCacheCompleteEvent : public LayerEventBase {
 public:
   KVCacheCompleteEvent(int layer_idx, int seq_len, int token_idx)
     : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "KVCacheComplete"; }
+  [[nodiscard]] constexpr const char* typeName() const noexcept override { return "KVCacheComplete"; }
 };
 
 // ========== 自注意力完成事件 ==========
@@ -62,7 +62,7 @@ class SelfAttentionCompleteEvent : public LayerEventBase {
 public:
   SelfAttentionCompleteEvent(int layer_idx, int seq_len, int token_idx)
     : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "SelfAttentionComplete"; }
+  [[nodiscard]] constexpr const char* typeName() const noexcept override { return "SelfAttentionComplete"; }
 };
 
 // ========== MLP 开始事件 ==========
@@ -70,7 +70,7 @@ class MLPBeginEvent : public LayerEventBase {
 public:
   MLPBeginEvent(int layer_idx, int seq_len, int token_idx)
     : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "MLPBegin"; }
+  [[nodiscard]] constexpr const char* typeName() const noexcept override { return "MLPBegin"; }
 };
 
 // ========== MLP 完成事件 ==========
@@ -78,7 +78,7 @@ class MLPCompleteEvent : public LayerEventBase {
 public:
   MLPCompleteEvent(int layer_idx, int seq_len, int token_idx)
     : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "MLPComplete"; }
+  [[nodiscard]] constexpr const char* typeName() const noexcept override { return "MLPComplete"; }
 };
 
 // ========== 生成 RoPE 逆频率向量 ==========

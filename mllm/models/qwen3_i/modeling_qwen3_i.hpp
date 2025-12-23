@@ -16,114 +16,58 @@ using Qwen3Config = mllm::models::qwen3::Qwen3Config;
 
 // ========== 层事件基类 ==========
 // 所有层相关事件的基类，包含通用的字段和方法
-class LayerEventBase : public Event {
-public:
-  LayerEventBase(int layer_idx, int seq_len, int token_idx)
-    : layer_idx_(layer_idx), seq_len_(seq_len), token_idx_(token_idx) {}
+enum class LayerEventType {
+  LayerBegin,
+  LayerComplete,
+  KVCacheComplete,
+  SelfAttentionComplete,
+  MLPBegin,
+  MLPComplete,
+};
 
+template<LayerEventType T>
+class LayerEvent : public Event {
+ public:
+  LayerEvent(int layer_idx, int seq_len, int token_idx) : layer_idx_(layer_idx), seq_len_(seq_len), token_idx_(token_idx) {}
   [[nodiscard]] std::map<std::string, std::string> toData() const override {
-    return {
-      {"layer_idx", std::to_string(layer_idx_)},
-      {"seq_len", std::to_string(seq_len_)},
-      {"token_idx", std::to_string(token_idx_)}
-    };
+    return {{"layer_idx", std::to_string(layer_idx_)},
+            {"seq_len", std::to_string(seq_len_)},
+            {"token_idx", std::to_string(token_idx_)}};
+  }
+  [[nodiscard]] constexpr const char* typeName() const noexcept override {
+    switch (T) {
+      case LayerEventType::LayerBegin: return "LayerBegin";
+      case LayerEventType::LayerComplete: return "LayerComplete";
+      case LayerEventType::KVCacheComplete: return "KVCacheComplete";
+      case LayerEventType::SelfAttentionComplete: return "SelfAttentionComplete";
+      case LayerEventType::MLPBegin: return "MLPBegin";
+      case LayerEventType::MLPComplete: return "MLPComplete";
+      default: return "Unknown";
+    }
   }
 
-protected:
+ private:
   int layer_idx_;
   int seq_len_;
-  int token_idx_;  // 当前是第几个 token 的推理
+  int token_idx_;
 };
 
-// ========== 层开始事件 ==========
-class LayerBeginEvent : public LayerEventBase {
-public:
-  LayerBeginEvent(int layer_idx, int seq_len, int token_idx)
-    : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "LayerBegin"; }
-};
+using LayerBeginEvent = LayerEvent<LayerEventType::LayerBegin>;
+using LayerCompleteEvent = LayerEvent<LayerEventType::LayerComplete>;
+using KVCacheCompleteEvent = LayerEvent<LayerEventType::KVCacheComplete>;
+using SelfAttentionCompleteEvent = LayerEvent<LayerEventType::SelfAttentionComplete>;
+using MLPBeginEvent = LayerEvent<LayerEventType::MLPBegin>;
+using MLPCompleteEvent = LayerEvent<LayerEventType::MLPComplete>;
 
-// ========== 层完成事件 ==========
-class LayerCompleteEvent : public LayerEventBase {
-public:
-  LayerCompleteEvent(int layer_idx, int seq_len, int token_idx)
-    : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "LayerComplete"; }
-};
-
-// ========== KV Cache 完成事件 ==========
-class KVCacheCompleteEvent : public LayerEventBase {
-public:
-  KVCacheCompleteEvent(int layer_idx, int seq_len, int token_idx)
-    : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "KVCacheComplete"; }
-};
-
-// ========== 自注意力完成事件 ==========
-class SelfAttentionCompleteEvent : public LayerEventBase {
-public:
-  SelfAttentionCompleteEvent(int layer_idx, int seq_len, int token_idx)
-    : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "SelfAttentionComplete"; }
-};
-
-// ========== MLP 开始事件 ==========
-class MLPBeginEvent : public LayerEventBase {
-public:
-  MLPBeginEvent(int layer_idx, int seq_len, int token_idx)
-    : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "MLPBegin"; }
-};
-
-// ========== MLP 完成事件 ==========
-class MLPCompleteEvent : public LayerEventBase {
-public:
-  MLPCompleteEvent(int layer_idx, int seq_len, int token_idx)
-    : LayerEventBase(layer_idx, seq_len, token_idx) {}
-  [[nodiscard]] std::string typeName() const override { return "MLPComplete"; }
-};
-
-// ========== 生成 RoPE 逆频率向量 ==========
-// 该函数用于生成旋转位置编码（RoPE）所需的逆频率向量
-// 逆频率用于计算不同维度的旋转角度，实现位置信息的编码
-//
-// 参数:
-//   output_dim: 输出维度（通常是 head_dim）
-//   rope_theta: RoPE 的基础频率参数，控制位置编码的周期
-//
-// 返回:
-//   逆频率向量，形状为 [output_dim / 2]
-//   每个元素的计算公式: 1.0 / (rope_theta ^ (2*i / output_dim))
-//   其中 i 是维度索引，范围 [0, output_dim/2)
 inline auto makeRoPEInvFreq(int output_dim, float rope_theta) -> Tensor {
-  // 创建逆频率张量，大小为 output_dim / 2
-  // 因为 RoPE 使用成对的维度进行旋转，所以只需要一半的维度
   auto inv_freq = Tensor::empty({output_dim / 2}, kFloat32, kCPU).alloc();
   auto inv_freq_ptr = inv_freq.ptr<float>();
-  
-  // 计算每个维度的逆频率
-  // 频率随维度索引递减，使得不同维度有不同的旋转周期
-  for (int i = 0; i < output_dim / 2; i++) { 
-    inv_freq_ptr[i] = 1.0 / std::pow(rope_theta, 2.0 * i / output_dim); 
-  }
-  
+  for (int i = 0; i < output_dim / 2; i++) { inv_freq_ptr[i] = 1.0 / std::pow(rope_theta, 2.0 * i / output_dim); }
   return inv_freq;
 }
 
-// ========== 生成旋转位置编码 (RoPE) ==========
-// 该函数基于位置编码和逆频率向量，生成 RoPE 所需的正弦和余弦嵌入
-// RoPE 通过旋转矩阵的方式将位置信息编码到 Query 和 Key 向量中
-//
-// 参数:
-//   position_ids: 位置编码，形状为 [B, S]，每个元素是 token 的位置索引
-//   inv_freq: 逆频率向量，形状为 [dim/2]，由 makeRoPEInvFreq 生成
-//   attention_scaling: 注意力缩放因子，默认为 1.0
-//
-// 返回:
-//   一对张量 (sin_emb, cos_emb)，形状均为 [B, S, dim]
-//   用于后续的旋转位置编码计算
-inline auto makeRotaryPosEmbedding(Tensor& position_ids, const Tensor& inv_freq,
-                             float attention_scaling = 1.0) -> std::pair<Tensor, Tensor> {
+inline auto makeRotaryPosEmbedding(Tensor& position_ids, const Tensor& inv_freq, float attention_scaling = 1.0)
+    -> std::pair<Tensor, Tensor> {
   // ========== 1. 获取维度信息 ==========
   auto batch_size = position_ids.shape()[0];  // 批次大小
   auto seq_len = position_ids.shape()[1];     // 序列长度
@@ -293,16 +237,17 @@ class Qwen3Text final : public nn::Module {
 
 class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
  public:
-  explicit Qwen3ForCausalLM(const Qwen3Config& cfg) : cfg(cfg),
+  explicit Qwen3ForCausalLM(const Qwen3Config& cfg)
+      : cfg(cfg),
         kv_cache_(std::filesystem::path("./data/qwen3_i_kvcache"),  // working_dir
-                  cfg.max_cache_length,                                // max_cache_length
-                  cfg.num_hidden_layers,                               // layer_nums
-                  cfg.num_attention_heads,                             // q_heads
-                  cfg.num_key_value_heads,                              // kv_heads
-                  cfg.head_dim,                                        // kv_dims
-                  kFloat32,                                            // k_dtype
-                  kFloat32,                                            // v_dtype
-                  kCPU                                                  // device_type
+                  cfg.max_cache_length,                             // max_cache_length
+                  cfg.num_hidden_layers,                            // layer_nums
+                  cfg.num_attention_heads,                          // q_heads
+                  cfg.num_key_value_heads,                          // kv_heads
+                  cfg.head_dim,                                     // kv_dims
+                  kFloat32,                                         // k_dtype
+                  kFloat32,                                         // v_dtype
+                  kCPU                                              // device_type
         ) {
     eos_token_id_ = cfg.end_of_text_token_id;
     max_length_ = cfg.max_cache_length;
