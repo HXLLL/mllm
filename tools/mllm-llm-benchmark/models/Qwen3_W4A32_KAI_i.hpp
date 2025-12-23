@@ -15,7 +15,8 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
  public:
   using Qwen3Config = mllm::models::qwen3::Qwen3Config;
   using Qwen3IntermittentForCausalLM = mllm::models::qwen3_i::Qwen3IntermittentForCausalLM;
-  void init(const std::string& cfg_path, const std::string& model_path, int32_t cache_length, const std::string& cache_dir) override {
+  
+  explicit Qwen3_W4A32_KAI_Benchmark_Intermittent(const std::string& cfg_path, const std::string& model_path, int32_t cache_length, const std::string& cache_dir) {
     // Load config
     config_ = std::make_unique<Qwen3Config>(cfg_path);
     

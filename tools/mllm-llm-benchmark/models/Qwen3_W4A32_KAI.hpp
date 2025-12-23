@@ -4,7 +4,6 @@
 
 #include <memory>
 #include <chrono>
-#include <thread>
 
 #include "BenchmarkTemplate.hpp"
 #include <mllm/mllm.hpp>
@@ -15,7 +14,8 @@ class Qwen3_W4A32_KAI_Benchmark final : public BenchmarkTemplate {
  public:
   using Qwen3Config = mllm::models::qwen3::Qwen3Config;
   using Qwen3ForCausalLM = mllm::models::qwen3::Qwen3ForCausalLM;
-  void init(const std::string& cfg_path, const std::string& model_path, int32_t cache_length, const std::string& cache_dir) override {
+  
+  explicit Qwen3_W4A32_KAI_Benchmark(const std::string& cfg_path, const std::string& model_path, int32_t cache_length) {
     // Load config
     config_ = std::make_unique<Qwen3Config>(cfg_path);
     

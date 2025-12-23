@@ -34,21 +34,27 @@ class LayerEvent : public Event {
 };
 
 struct LayerBeginEvent final : public LayerEvent<LayerBeginEvent> {
+  using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "LayerBegin";
 };
 struct LayerCompleteEvent final : public LayerEvent<LayerCompleteEvent> {
+  using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "LayerComplete";
 };
 struct KVCacheCompleteEvent final : public LayerEvent<KVCacheCompleteEvent> {
+  using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "KVCacheComplete";
 };
 struct SelfAttentionCompleteEvent final : public LayerEvent<SelfAttentionCompleteEvent> {
+  using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "SelfAttentionComplete";
 };
 struct MLPBeginEvent final : public LayerEvent<MLPBeginEvent> {
+  using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "MLPBegin";
 };
 struct MLPCompleteEvent final : public LayerEvent<MLPCompleteEvent> {
+  using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "MLPComplete";
 };
 

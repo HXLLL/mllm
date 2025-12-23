@@ -87,11 +87,6 @@ MLLM_MAIN({
   auto& cache_dir = mllm::Argparse::add<std::string>("--cache_dir").help("Cache directory path for persistent KV cache (default: ./data/qwen3_i_kvcache)");
   mllm::Argparse::parse(argc, argv);
 
-  // Create benchmark
-  mllm::print("Create Benchmark: ", model_name.get());
-  auto benchmark = createBenchmark(model_name.get(), intermittent.get());
-  MLLM_RT_ASSERT(benchmark != nullptr);
-
   // Set CPU operation threads if specified
   if (num_threads.isSet() && num_threads.get() > 0) {
     mllm::Context::instance().setCpuOpThreads(num_threads.get());
@@ -100,9 +95,11 @@ MLLM_MAIN({
     mllm::print("Using default CPU operation threads:", mllm::Context::instance().getCpuOpThreads());
   }
 
-  // Print Model Info
+  // Create benchmark with all required parameters
+  mllm::print("Create Benchmark: ", model_name.get());
   std::string cache_dir_path = cache_dir.isSet() ? cache_dir.get() : "";
-  benchmark->init(config_path.get(), model_path.get(), cache_length.get(), cache_dir_path);
+  auto benchmark = createBenchmark(model_name.get(), config_path.get(), model_path.get(), cache_length.get(), cache_dir_path, intermittent.get());
+  MLLM_RT_ASSERT(benchmark != nullptr);
   
   // Set chunksize if specified
   if (chunksize.isSet() && chunksize.get() > 0) {
