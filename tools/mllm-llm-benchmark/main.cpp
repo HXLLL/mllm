@@ -29,6 +29,7 @@ MLLM_MAIN({
   auto& cache_length = mllm::Argparse::add<int32_t>("-cl|--cache_length").help("Cache length");
   auto& trace_file = mllm::Argparse::add<std::string>("--trace_file").help("Trace file path (CSV). If not specified, tracing is disabled");
   auto& chunksize = mllm::Argparse::add<int32_t>("-cs|--chunksize").help("Chunk size for sequence processing (default: 1)");
+  auto& intermittent = mllm::Argparse::add<bool>("-i|--intermittent").help("Intermittent mode (default: false)");
   mllm::Argparse::parse(argc, argv);
 
   // Set CPU operation threads if specified
@@ -85,7 +86,7 @@ MLLM_MAIN({
 
   // Create benchmark
   mllm::print("Create Benchmark: ", model_name.get());
-  auto benchmark = createBenchmark(model_name.get());
+  auto benchmark = createBenchmark(model_name.get(), intermittent.get());
   MLLM_RT_ASSERT(benchmark != nullptr);
 
   // Print Model Info
