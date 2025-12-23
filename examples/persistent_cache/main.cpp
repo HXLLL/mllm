@@ -22,36 +22,28 @@ int main() {
   const std::filesystem::path cache_dir = "./data/test_cache";
 
   // 1. 启动时，如果没有目标文件夹，则创建，否则恢复
-  nn::PersistentCache::ptr_t cache;
+  std::shared_ptr<nn::PersistentCache> cache;
   if (std::filesystem::exists(cache_dir / "metadata.json")) {
     print("=== Recovering PersistentCache ===");
     cache = nn::PersistentCache::recover(cache_dir);
+    if (!cache) {
+      print("Failed to recover cache");
+      return 1;
+    }
     print("Current seq count:", cache->getCurrentSeqCnt(0));
   } else {
     print("=== Creating PersistentCache ===");
-    nn::PersistentCacheOptions options;
-    options.working_dir = cache_dir;
-    options.max_cache_length = max_cache_length;
-    options.layer_nums = layer_nums;
-    options.q_heads = q_heads;
-    options.kv_heads = kv_heads;
-    options.kv_dims = kv_dim;
-    options.k_dtype = kFloat32;
-    options.v_dtype = kFloat32;
-    options.device_type = kCPU;
-    // cache = nn::PersistentCache::create(options);
-    if (!cache) {
-      print("Failed to create cache");
+    try {
+      cache = std::make_shared<nn::PersistentCache>(cache_dir, max_cache_length, layer_nums, q_heads, kv_heads, kv_dim,
+                                                    kFloat32, kFloat32, kCPU);
+      print("Cache created at:", cache->workingDir().string());
+    } catch (const std::exception& e) {
+      print("Failed to create cache:", e.what());
       return 1;
     }
-    print("Cache created at:", cache->workingDir().string());
   }
 
   auto scache = std::make_shared<nn::StaticCache>(max_cache_length, layer_nums, q_heads, kv_heads, kv_dim, kFloat32, kFloat32, kCPU, false);
-  if (!cache) {
-    print("Failed to initialize cache");
-    return 1;
-  }
 
   while (true) {
     int32_t cur_seq = cache->getCurrentSeqCnt(0);

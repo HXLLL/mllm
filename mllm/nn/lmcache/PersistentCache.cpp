@@ -19,15 +19,35 @@
 
 namespace mllm::nn {
 
-PersistentCache::ptr_t PersistentCache::create(const PersistentCacheOptions& options) {
-  std::error_code ec;
-  std::filesystem::create_directories(options.working_dir, ec);
-  if (ec) return nullptr;
+PersistentCache::PersistentCache(const std::filesystem::path& working_dir, int32_t max_cache_length,
+                                 int32_t layer_nums, int32_t q_heads, int32_t kv_heads, int32_t kv_dims,
+                                 DataTypes k_dtype, DataTypes v_dtype, DeviceTypes device_type)
+    : working_dir_(working_dir),
+      device_type_(device_type),
+      k_dtype_(k_dtype),
+      v_dtype_(v_dtype),
+      max_cache_length_(max_cache_length),
+      layer_nums_(layer_nums),
+      q_heads_(q_heads),
+      kv_heads_(kv_heads),
+      kv_dims_(kv_dims),
+      seq_cnt_(layer_nums, 0),
+      saved_seq_cnt_(layer_nums, 0),
+      is_dirty_(true) {
+  MLLM_RT_ASSERT(device_type_ == kCPU);
 
-  auto cache = std::make_shared<PersistentCache>(options);
-  if (!cache->initMmap()) return nullptr;
-  cache->initTensorsFromMmap();
-  return cache;
+  // Create working directory
+  std::error_code ec;
+  std::filesystem::create_directories(working_dir_, ec);
+  if (ec) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to create PersistentCache directory: {}", working_dir_.string());
+  }
+
+  // Initialize mmap
+  if (!initMmap()) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to initialize mmap for PersistentCache: {}", working_dir_.string());
+  }
+  initTensorsFromMmap();
 }
 
 PersistentCache::ptr_t PersistentCache::recover(const std::filesystem::path& working_dir) {
@@ -39,25 +59,26 @@ PersistentCache::ptr_t PersistentCache::recover(const std::filesystem::path& wor
     nlohmann::json j;
     file >> j;
 
-    PersistentCacheOptions opts;
-    opts.working_dir = working_dir;
-    opts.max_cache_length = j.at("max_cache_length");
-    opts.layer_nums = j.at("layer_nums");
-    opts.q_heads = j.at("q_heads");
-    opts.kv_heads = j.at("kv_heads");
-    opts.kv_dims = j.at("kv_dims");
-    opts.k_dtype = static_cast<DataTypes>(j.at("k_dtype").get<int>());
-    opts.v_dtype = static_cast<DataTypes>(j.at("v_dtype").get<int>());
+    // Read parameters from metadata
+    auto max_cache_length = j.at("max_cache_length").get<int32_t>();
+    auto layer_nums = j.at("layer_nums").get<int32_t>();
+    auto q_heads = j.at("q_heads").get<int32_t>();
+    auto kv_heads = j.at("kv_heads").get<int32_t>();
+    auto kv_dims = j.at("kv_dims").get<int32_t>();
+    auto k_dtype = static_cast<DataTypes>(j.at("k_dtype").get<int>());
+    auto v_dtype = static_cast<DataTypes>(j.at("v_dtype").get<int>());
 
-    auto cache = std::make_shared<PersistentCache>(opts);
-    if (!cache->initMmap()) return nullptr;
-    cache->initTensorsFromMmap();
+    // Use public constructor to create the cache
+    auto cache = std::make_shared<PersistentCache>(working_dir, max_cache_length, layer_nums, q_heads, kv_heads,
+                                                    kv_dims, k_dtype, v_dtype, kCPU);
+
+    // Mark as not dirty since we're recovering existing data
     cache->is_dirty_ = false;
 
     // Restore sequence counts
     if (j.contains("saved_seq_cnts")) {
       auto& cnts = j["saved_seq_cnts"];
-      for (int32_t i = 0; i < opts.layer_nums && i < static_cast<int32_t>(cnts.size()); ++i) {
+      for (int32_t i = 0; i < layer_nums && i < static_cast<int32_t>(cnts.size()); ++i) {
         cache->seq_cnt_[i] = cache->saved_seq_cnt_[i] = cnts[i].get<int32_t>();
       }
     }
@@ -67,22 +88,6 @@ PersistentCache::ptr_t PersistentCache::recover(const std::filesystem::path& wor
     MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to recover PersistentCache from: {}", working_dir.string());
     return nullptr;
   }
-}
-
-PersistentCache::PersistentCache(const PersistentCacheOptions& options)
-    : working_dir_(options.working_dir),
-      device_type_(options.device_type),
-      k_dtype_(options.k_dtype),
-      v_dtype_(options.v_dtype),
-      max_cache_length_(options.max_cache_length),
-      layer_nums_(options.layer_nums),
-      q_heads_(options.q_heads),
-      kv_heads_(options.kv_heads),
-      kv_dims_(options.kv_dims),
-      seq_cnt_(options.layer_nums, 0),
-      saved_seq_cnt_(options.layer_nums, 0),
-      is_dirty_(true) {
-  MLLM_RT_ASSERT(device_type_ == kCPU);
 }
 
 PersistentCache::~PersistentCache() {

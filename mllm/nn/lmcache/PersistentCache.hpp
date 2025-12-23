@@ -10,19 +10,6 @@
 
 namespace mllm::nn {
 
-/* Options for creating a PersistentCache. */
-struct PersistentCacheOptions {
-  std::filesystem::path working_dir = "./kvcache";
-  int32_t max_cache_length = 1024;
-  int32_t layer_nums = 1;
-  int32_t q_heads = 1;
-  int32_t kv_heads = 1;
-  int32_t kv_dims = 1;
-  DataTypes k_dtype = DataTypes::kFloat16;
-  DataTypes v_dtype = DataTypes::kFloat16;
-  DeviceTypes device_type = DeviceTypes::kCPU;
-};
-
 /* A persistent KV cache that can be saved to and restored from disk.
  *
  * Directory structure:
@@ -31,17 +18,23 @@ struct PersistentCacheOptions {
  *     kv.bin          - Binary KV cache data
  *
  * Usage:
- *   auto cache = PersistentCache::create(options);
+ *   // Create new cache (similar to StaticCache interface)
+ *   PersistentCache cache(working_dir, max_cache_length, layer_nums, q_heads, 
+ *                          kv_heads, kv_dims, k_dtype, v_dtype, device_type);
  *   // ... use the cache ...
- *   cache->sync();
+ *   cache.sync();
  *   // Later: auto recovered = PersistentCache::recover("./kvcache");
  */
 class PersistentCache : public AbstractStaticCache {
  public:
   using ptr_t = std::shared_ptr<PersistentCache>;
 
-  /* Creates a new PersistentCache in memory. */
-  [[nodiscard]] static ptr_t create(const PersistentCacheOptions& options);
+  /* Constructor similar to StaticCache. Creates a new PersistentCache.
+   * Throws std::runtime_error if initialization fails.
+   */
+  PersistentCache(const std::filesystem::path& working_dir, int32_t max_cache_length, 
+                  int32_t layer_nums, int32_t q_heads, int32_t kv_heads, int32_t kv_dims,
+                  DataTypes k_dtype, DataTypes v_dtype, DeviceTypes device_type = kCPU);
 
   /* Recovers a PersistentCache from disk. Returns nullptr on failure. */
   [[nodiscard]] static ptr_t recover(const std::filesystem::path& working_dir);
@@ -72,8 +65,6 @@ class PersistentCache : public AbstractStaticCache {
 
   [[nodiscard]] bool isDirty() const noexcept { return is_dirty_; }
   [[nodiscard]] const std::filesystem::path& workingDir() const noexcept { return working_dir_; }
-
-  explicit PersistentCache(const PersistentCacheOptions& options);
 
  private:
   [[nodiscard]] bool initMmap();

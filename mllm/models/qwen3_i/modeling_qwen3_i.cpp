@@ -3,6 +3,7 @@
 
 #include "mllm/models/qwen3_i/modeling_qwen3_i.hpp"
 #include "mllm/nn/Functional.hpp"
+#include "mllm/nn/lmcache/PersistentCache.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -46,7 +47,7 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   auto x = inputs[0];
   auto llm_embedding_sin = inputs[1];
   auto llm_embedding_cos = inputs[2];
-  auto past_kv_cache = args[0].get<nn::StaticCache*>();
+  auto past_kv_cache = args[0].get<nn::PersistentCache*>();
 
   // ========== 2. 线性投影生成 Q、K、V ==========
   // 通过三个独立的线性层将输入投影为 Query、Key、Value
@@ -371,7 +372,7 @@ ARGenerationOutputPast Qwen3ForCausalLM::forward(const ARGenerationOutputPast& i
   };
 }
 
-nn::StaticCache& Qwen3ForCausalLM::kvCache() { return kv_cache_; }
+nn::PersistentCache& Qwen3ForCausalLM::kvCache() { return kv_cache_; }
 
 }  // namespace mllm::models::qwen3_i
 

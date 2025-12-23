@@ -17,32 +17,9 @@
 
 #include "models/All.hpp"
 #include "models/Qwen3_W4A32_KAI.hpp"
+#include "models/Qwen3_W4A32_KAI_i.hpp"
 
-MLLM_MAIN({
-  auto& help = mllm::Argparse::add<bool>("-h|--help").help("Show help message");
-  auto& model_name = mllm::Argparse::add<std::string>("-n|--model_name").help("Model name");
-  auto& model_path = mllm::Argparse::add<std::string>("-m|--model_path").help("Model path");
-  auto& config_path = mllm::Argparse::add<std::string>("-c|--config_path").help("Config path");
-  auto& num_threads = mllm::Argparse::add<int32_t>("-t|--threads").help("Number of threads");
-  auto& pp = mllm::Argparse::add<std::string>("-pp|--prompt_length").help("Prompt length");
-  auto& tg = mllm::Argparse::add<std::string>("-tg|--test_generation_length").help("Test Generation length");
-  auto& cache_length = mllm::Argparse::add<int32_t>("-cl|--cache_length").help("Cache length");
-  auto& trace_file = mllm::Argparse::add<std::string>("--trace_file").help("Trace file path (CSV). If not specified, tracing is disabled");
-  auto& chunksize = mllm::Argparse::add<int32_t>("-cs|--chunksize").help("Chunk size for sequence processing (default: 1)");
-  auto& intermittent = mllm::Argparse::add<bool>("-i|--intermittent").help("Intermittent mode (default: false)");
-  mllm::Argparse::parse(argc, argv);
-
-  // Set CPU operation threads if specified
-  if (num_threads.isSet() && num_threads.get() > 0) {
-    mllm::Context::instance().setCpuOpThreads(num_threads.get());
-    mllm::print("CPU operation threads set to:", num_threads.get());
-  } else {
-    mllm::print("Using default CPU operation threads:", mllm::Context::instance().getCpuOpThreads());
-  }
-
-  // Print Build Version
-  mllm::print("MLLM Build Version :", STRINGIFY(MLLM_GIT_COMMIT_HASH));
-
+static void print_device_info() {
   // Print Device Info
   mllm::print("ARCH               :", mllm::cpu::CURRENT_ARCH_STRING);
   mllm::print("FP16               :", mllm::cpu::hasFP16());
@@ -65,6 +42,13 @@ MLLM_MAIN({
   mllm::print("AVX512DQ           :", mllm::cpu::hasAVX512DQ());
   mllm::print("AVX512VL           :", mllm::cpu::hasAVX512VL());
   mllm::print("FMA                :", mllm::cpu::hasFMA());
+}
+
+static void print_basic_info() {
+  // Print Build Version
+  mllm::print("MLLM Build Version :", STRINGIFY(MLLM_GIT_COMMIT_HASH));
+
+  print_device_info();
 
   // Print Threading Implementation Info
   mllm::print("\n========== Threading Implementation ==========");
@@ -83,27 +67,47 @@ MLLM_MAIN({
 #endif
   mllm::print("CPU Op Threads     :", mllm::Context::instance().getCpuOpThreads());
   mllm::print("===============================================\n");
+}
+
+MLLM_MAIN({
+  auto& help = mllm::Argparse::add<bool>("-h|--help").help("Show help message");
+  auto& model_name = mllm::Argparse::add<std::string>("-n|--model_name").help("Model name");
+  auto& model_path = mllm::Argparse::add<std::string>("-m|--model_path").help("Model path");
+  auto& config_path = mllm::Argparse::add<std::string>("-c|--config_path").help("Config path");
+  auto& num_threads = mllm::Argparse::add<int32_t>("-t|--threads").help("Number of threads");
+  auto& pp = mllm::Argparse::add<std::string>("-pp|--prompt_length").help("Prompt length");
+  auto& tg = mllm::Argparse::add<std::string>("-tg|--test_generation_length").help("Test Generation length");
+  auto& cache_length = mllm::Argparse::add<int32_t>("-cl|--cache_length").help("Cache length");
+  auto& trace_file = mllm::Argparse::add<std::string>("--trace_file").help("Trace file path (CSV). If not specified, tracing is disabled");
+  auto& chunksize = mllm::Argparse::add<int32_t>("-cs|--chunksize").help("Chunk size for sequence processing (default: 1)");
+  auto& intermittent = mllm::Argparse::add<bool>("-i|--intermittent").help("Intermittent mode (default: false)");
+  mllm::Argparse::parse(argc, argv);
 
   // Create benchmark
   mllm::print("Create Benchmark: ", model_name.get());
   auto benchmark = createBenchmark(model_name.get(), intermittent.get());
   MLLM_RT_ASSERT(benchmark != nullptr);
 
+  // Set CPU operation threads if specified
+  if (num_threads.isSet() && num_threads.get() > 0) {
+    mllm::Context::instance().setCpuOpThreads(num_threads.get());
+    mllm::print("CPU operation threads set to:", num_threads.get());
+  } else {
+    mllm::print("Using default CPU operation threads:", mllm::Context::instance().getCpuOpThreads());
+  }
+
   // Print Model Info
   mllm::print("Model Info");
   benchmark->init(config_path.get(), model_path.get(), cache_length.get());
+  benchmark->printModelInfo();
   
   // Set chunksize if specified
   if (chunksize.isSet() && chunksize.get() > 0) {
-    // Try to cast to Qwen3_W4A32_KAI_Benchmark to call setChunkSize
-    // We need to include the header and use dynamic_cast or static_cast
-    auto* qwen3_benchmark = dynamic_cast<Qwen3_W4A32_KAI_Benchmark*>(benchmark.get());
+    auto* qwen3_benchmark = dynamic_cast<Qwen3_W4A32_KAI_Benchmark_Intermittent*>(benchmark.get());
     if (qwen3_benchmark) {
       qwen3_benchmark->setChunkSize(chunksize.get());
     }
   }
-  
-  benchmark->printModelInfo();
 
   // Warmup run
   mllm::print("Warmup Run");

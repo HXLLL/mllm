@@ -4,7 +4,7 @@
 #include "mllm/mllm.hpp"
 #include "mllm/nn/Module.hpp"
 #include "mllm/nn/Nn.hpp"
-#include "mllm/nn/lmcache/StaticCache.hpp"
+#include "mllm/nn/lmcache/PersistentCache.hpp"
 #include "mllm/models/qwen3/configuration_qwen3.hpp"
 #include "mllm/utils/Enumerate.hpp"
 #include "mllm/models/ARGeneration.hpp"
@@ -293,16 +293,17 @@ class Qwen3Text final : public nn::Module {
 
 class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
  public:
-  explicit Qwen3ForCausalLM(const Qwen3Config& cfg) : cfg(cfg) {
-    kv_cache_ = nn::StaticCache(cfg.max_cache_length, cfg.num_hidden_layers,
-                                cfg.num_attention_heads,  // q_heads
-                                cfg.num_key_value_heads,  // kv_heads
-                                cfg.head_dim,             // kv_dim
-                                kFloat32,                 // k_dtype
-                                kFloat32,                 // v_dtype
-                                kCPU,                     // device_type
-                                false                     // use_fa2
-    );
+  explicit Qwen3ForCausalLM(const Qwen3Config& cfg) : cfg(cfg),
+        kv_cache_(std::filesystem::path("./data/qwen3_i_kvcache"),  // working_dir
+                  cfg.max_cache_length,                                // max_cache_length
+                  cfg.num_hidden_layers,                               // layer_nums
+                  cfg.num_attention_heads,                             // q_heads
+                  cfg.num_key_value_heads,                              // kv_heads
+                  cfg.head_dim,                                        // kv_dims
+                  kFloat32,                                            // k_dtype
+                  kFloat32,                                            // v_dtype
+                  kCPU                                                  // device_type
+        ) {
     eos_token_id_ = cfg.end_of_text_token_id;
     max_length_ = cfg.max_cache_length;
     tie_word_embeddings_ = cfg.tie_word_embeddings;
@@ -322,7 +323,7 @@ class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
 
   ARGenerationOutputPast forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) override;
 
-  nn::StaticCache& kvCache();
+  nn::PersistentCache& kvCache();
 
   // 重置 token 计数器（在 clear/reset 时调用）
   void resetTokenCounter() { token_counter_ = 0; }
@@ -335,7 +336,7 @@ class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
   Qwen3Text llm;
   nn::Linear lm_head_;
   bool tie_word_embeddings_;
-  nn::StaticCache kv_cache_;
+  nn::PersistentCache kv_cache_;
   int token_counter_ = 0;
 };
 
