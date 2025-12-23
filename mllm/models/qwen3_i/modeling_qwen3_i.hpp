@@ -14,18 +14,7 @@ namespace mllm::models::qwen3_i {
 
 using Qwen3Config = mllm::models::qwen3::Qwen3Config;
 
-// ========== 层事件基类 ==========
-// 所有层相关事件的基类，包含通用的字段和方法
-enum class LayerEventType {
-  LayerBegin,
-  LayerComplete,
-  KVCacheComplete,
-  SelfAttentionComplete,
-  MLPBegin,
-  MLPComplete,
-};
-
-template<LayerEventType T>
+template<typename Derived>
 class LayerEvent : public Event {
  public:
   LayerEvent(int layer_idx, int seq_len, int token_idx) : layer_idx_(layer_idx), seq_len_(seq_len), token_idx_(token_idx) {}
@@ -34,16 +23,8 @@ class LayerEvent : public Event {
             {"seq_len", std::to_string(seq_len_)},
             {"token_idx", std::to_string(token_idx_)}};
   }
-  [[nodiscard]] constexpr const char* typeName() const noexcept override {
-    switch (T) {
-      case LayerEventType::LayerBegin: return "LayerBegin";
-      case LayerEventType::LayerComplete: return "LayerComplete";
-      case LayerEventType::KVCacheComplete: return "KVCacheComplete";
-      case LayerEventType::SelfAttentionComplete: return "SelfAttentionComplete";
-      case LayerEventType::MLPBegin: return "MLPBegin";
-      case LayerEventType::MLPComplete: return "MLPComplete";
-      default: return "Unknown";
-    }
+  [[nodiscard]] const char* typeName() const noexcept override {
+    return Derived::kTypeName;
   }
 
  private:
@@ -52,12 +33,21 @@ class LayerEvent : public Event {
   int token_idx_;
 };
 
-using LayerBeginEvent = LayerEvent<LayerEventType::LayerBegin>;
-using LayerCompleteEvent = LayerEvent<LayerEventType::LayerComplete>;
-using KVCacheCompleteEvent = LayerEvent<LayerEventType::KVCacheComplete>;
-using SelfAttentionCompleteEvent = LayerEvent<LayerEventType::SelfAttentionComplete>;
-using MLPBeginEvent = LayerEvent<LayerEventType::MLPBegin>;
-using MLPCompleteEvent = LayerEvent<LayerEventType::MLPComplete>;
+struct LayerBeginEvent final : public LayerEvent<LayerBeginEvent> {
+  static constexpr const char* kTypeName = "LayerBegin";
+};
+struct LayerCompleteEvent final : public LayerEvent<LayerCompleteEvent> {
+  static constexpr const char* kTypeName = "LayerComplete";
+};
+struct KVCacheCompleteEvent final : public LayerEvent<KVCacheCompleteEvent> {
+  static constexpr const char* kTypeName = "KVCacheComplete";
+};
+struct SelfAttentionCompleteEvent final : public LayerEvent<SelfAttentionCompleteEvent> {
+  static constexpr const char* kTypeName = "SelfAttentionComplete";
+};
+struct MLPBeginEvent final : public LayerEvent<MLPBeginEvent> {
+  static constexpr const char* kTypeName = "MLPBegin";
+};
 
 inline auto makeRoPEInvFreq(int output_dim, float rope_theta) -> Tensor {
   auto inv_freq = Tensor::empty({output_dim / 2}, kFloat32, kCPU).alloc();
@@ -249,6 +239,7 @@ class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
                   kFloat32,                                         // v_dtype
                   kCPU                                              // device_type
         ) {
+    MLLM_INFO("Initializing intermittent version of qwen3")
     eos_token_id_ = cfg.end_of_text_token_id;
     max_length_ = cfg.max_cache_length;
     tie_word_embeddings_ = cfg.tie_word_embeddings;

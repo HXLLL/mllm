@@ -5,9 +5,9 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <chrono>
 #include <fstream>
-#include <algorithm>
 #include <memory>
 
 namespace mllm {
@@ -26,6 +26,23 @@ public:
 
 protected:
   std::chrono::high_resolution_clock::time_point timestamp_;
+};
+
+template <typename Derived>
+class MetaEvent : public Event {
+public:
+  [[nodiscard]] std::map<std::string, std::string> toData() const override { return {}; }
+  [[nodiscard]] const char* typeName() const noexcept override {
+    return Derived::kTypeName;
+  }
+};
+
+struct StartTracingEvent final : public MetaEvent<StartTracingEvent> {
+  static constexpr const char* kTypeName = "StartTracing";
+};
+
+struct StopTracingEvent final : public MetaEvent<StopTracingEvent> {
+  static constexpr const char* kTypeName = "StopTracing";
 };
 
 class Tracer {
@@ -50,21 +67,18 @@ public:
     }
   }
   
-  // 启用 tracing，重置开始时间
   void enable() {
     enabled_ = true;
     start_time_ = std::chrono::high_resolution_clock::now();
+    record<StartTracingEvent>();
   }
   
-  // 禁用 tracing
   void disable() {
+    if (enabled_) record<StopTracingEvent>();
     enabled_ = false;
   }
   
-  // 检查是否启用
-  [[nodiscard]] bool isEnabled() const {
-    return enabled_;
-  }
+  [[nodiscard]] bool isEnabled() const { return enabled_; }
   
   [[nodiscard]] const std::vector<std::unique_ptr<Event>>& getEvents() const { 
     return events_; 
@@ -78,45 +92,36 @@ public:
     return events_.size(); 
   }
   
-  [[nodiscard]] bool exportToCSV(const std::string& filepath) const {
-    std::ofstream file(filepath);
-    if (!file.is_open()) {
-      return false;
-    }
+  [[nodiscard]] bool exportToCSV(const std::string& filepath, bool append = false) const {
+    std::ifstream check(filepath);
+    bool file_exists = check.good();
+    check.close();
     
-    // Collect all unique keys
-    std::vector<std::string> keys;
+    std::ofstream file(filepath, append && file_exists ? std::ios::app : std::ios::trunc);
+    if (!file.is_open()) return false;
+    
+    std::set<std::string> keys;
     for (const auto& event : events_) {
-      const auto& data = event->toData();
-      for (const auto& [key, value] : data) {
-        if (std::find(keys.begin(), keys.end(), key) == keys.end()) {
-          keys.push_back(key);
-        }
+      for (const auto& [key, value] : event->toData()) {
+        keys.insert(key);
       }
     }
     
-    // Write header
-    file << "type,timestamp_us";
-    for (const auto& key : keys) {
-      file << "," << key;
+    if (!append || !file_exists) {
+      file << "type,timestamp_us";
+      for (const auto& key : keys) file << "," << key;
+      file << "\n";
     }
-    file << "\n";
     
-    // Write events
     for (const auto& event : events_) {
-      file << event->typeName() << ",";
-      
-      auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
-        event->timestamp() - start_time_);
-      file << duration.count();
-      
+      file << event->typeName() << ","
+           << std::chrono::duration_cast<std::chrono::microseconds>(
+                event->timestamp() - start_time_).count();
       const auto& data = event->toData();
       for (const auto& key : keys) {
         file << ",";
         auto it = data.find(key);
-        if (it != data.end()) {
-          file << it->second;
-        }
+        if (it != data.end()) file << it->second;
       }
       file << "\n";
     }

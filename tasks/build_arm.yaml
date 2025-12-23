@@ -17,5 +17,5 @@ Tasks:
         - "-DMLLM_ENABLE_TOOLS=ON"
   - CMakeBuildTask:
       cmake_cfg_path: "build"
-      targets: [ "mllm-llm-benchmark", "mllm-persistent-cache", "mllm-bench-i" ]
+      targets: [ "mllm-llm-benchmark", "mllm-persistent-cache" ]
 
