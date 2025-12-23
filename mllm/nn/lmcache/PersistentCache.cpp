@@ -194,8 +194,6 @@ std::array<Tensor, 2> PersistentCache::updateKVCache(int32_t layer_idx, Tensor k
 
   const size_t copy_bytes = seq_len * kv_dims_ * bytesOfType(k_dtype_) / lanesOfType(k_dtype_);
 
-  MLLM_INFO("updateKVCache: layer_idx={}, seq_len={}, repeat={}, cur_seq={}, copy_bytes={}", layer_idx, seq_len, repeat, cur_seq, copy_bytes);
-
   for (int h = 0; h < kv_heads_; ++h) {
     for (int r = 0; r < repeat; ++r) {
       const int dst_h = h * repeat + r;
