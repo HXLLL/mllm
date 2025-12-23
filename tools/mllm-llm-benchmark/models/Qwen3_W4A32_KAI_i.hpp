@@ -4,7 +4,7 @@
 
 #include <memory>
 #include <chrono>
-#include <thread>
+#include <filesystem>
 
 #include "BenchmarkTemplate.hpp"
 #include <mllm/mllm.hpp>
@@ -14,8 +14,8 @@
 class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
  public:
   using Qwen3Config = mllm::models::qwen3::Qwen3Config;
-  using Qwen3ForCausalLM = mllm::models::qwen3_i::Qwen3ForCausalLM;
-  void init(const std::string& cfg_path, const std::string& model_path, int32_t cache_length) override {
+  using Qwen3IntermittentForCausalLM = mllm::models::qwen3_i::Qwen3IntermittentForCausalLM;
+  void init(const std::string& cfg_path, const std::string& model_path, int32_t cache_length, const std::string& cache_dir) override {
     // Load config
     config_ = std::make_unique<Qwen3Config>(cfg_path);
     
@@ -24,14 +24,18 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
       config_->max_cache_length = cache_length;
     }
     
-    // Create model
-    model_ = std::make_unique<Qwen3ForCausalLM>(*config_);
+    // Create model with cache directory
+    std::filesystem::path cache_path = cache_dir.empty() ? std::filesystem::path("./data/qwen3_i_kvcache") : std::filesystem::path(cache_dir);
+    model_ = std::make_unique<Qwen3IntermittentForCausalLM>(*config_, cache_path);
     
     // Load weights
     auto param = mllm::load(model_path, mllm::ModelFileVersion::kV2);
     model_->load(param);
     
     mllm::print("Model initialized successfully");
+    if (!cache_dir.empty()) {
+      mllm::print("Cache directory:", cache_dir);
+    }
   }
 
   void setChunkSize(int32_t chunksize) {
@@ -179,5 +183,5 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
 
  private:
   std::unique_ptr<Qwen3Config> config_;
-  std::unique_ptr<Qwen3ForCausalLM> model_;
+  std::unique_ptr<Qwen3IntermittentForCausalLM> model_;
 };

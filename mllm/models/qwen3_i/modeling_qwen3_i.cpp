@@ -268,7 +268,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   }
 }
 
-ARGenerationOutputPast Qwen3ForCausalLM::forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) {
+ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) {
   // ========== 1. 获取输入序列 ==========
   // 从输入字典中获取 token 序列
   // sequence 形状: [B, S]，其中每个元素是 token ID
@@ -317,7 +317,7 @@ ARGenerationOutputPast Qwen3ForCausalLM::forward(const ARGenerationOutputPast& i
   // 模型会依次通过：嵌入层 -> 多个解码器层 -> 最终归一化
   // 输出形状: [B, S, hidden_size]
   sequence = llm(sequence, llm_embedding_sin, llm_embedding_cos, 
-                 AnyValue(&kv_cache_), AnyValue(token_counter_))[0];
+                 AnyValue(kv_cache_.get()), AnyValue(token_counter_))[0];
   token_counter_ += seq_len;
 
   // ========== 6. 提取最后一个 token 的表示 ==========
@@ -343,7 +343,7 @@ ARGenerationOutputPast Qwen3ForCausalLM::forward(const ARGenerationOutputPast& i
   };
 }
 
-nn::PersistentCache& Qwen3ForCausalLM::kvCache() { return kv_cache_; }
+nn::PersistentCache& Qwen3IntermittentForCausalLM::kvCache() { return *kv_cache_; }
 
 }  // namespace mllm::models::qwen3_i
 

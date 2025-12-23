@@ -27,8 +27,9 @@ class BenchmarkTemplate {
    * @param cfg_path Configuration file path
    * @param model_path Model weight file path
    * @param cache_length Maximum KV cache length
+   * @param cache_dir Cache directory path (optional, for persistent cache)
    */
-  virtual void init(const std::string& cfg_path, const std::string& model_path, int32_t cache_length) = 0;
+  virtual void init(const std::string& cfg_path, const std::string& model_path, int32_t cache_length, const std::string& cache_dir) = 0;
 
   /**
    * @brief Print model information

@@ -16,7 +16,6 @@
 #define STRINGIFY(x) STRINGIFY_INTERNAL(x)
 
 #include "models/All.hpp"
-#include "models/Qwen3_W4A32_KAI.hpp"
 #include "models/Qwen3_W4A32_KAI_i.hpp"
 
 static void print_device_info() {
@@ -85,6 +84,7 @@ MLLM_MAIN({
   auto& append_trace = mllm::Argparse::add<bool>("--append_trace").help("Append traces to existing trace file instead of overwriting (default: false)");
   auto& chunksize = mllm::Argparse::add<int32_t>("-cs|--chunksize").help("Chunk size for sequence processing (default: 1)");
   auto& intermittent = mllm::Argparse::add<bool>("-i|--intermittent").help("Intermittent mode (default: false)");
+  auto& cache_dir = mllm::Argparse::add<std::string>("--cache_dir").help("Cache directory path for persistent KV cache (default: ./data/qwen3_i_kvcache)");
   mllm::Argparse::parse(argc, argv);
 
   // Create benchmark
@@ -101,7 +101,8 @@ MLLM_MAIN({
   }
 
   // Print Model Info
-  benchmark->init(config_path.get(), model_path.get(), cache_length.get());
+  std::string cache_dir_path = cache_dir.isSet() ? cache_dir.get() : "";
+  benchmark->init(config_path.get(), model_path.get(), cache_length.get(), cache_dir_path);
   
   // Set chunksize if specified
   if (chunksize.isSet() && chunksize.get() > 0) {

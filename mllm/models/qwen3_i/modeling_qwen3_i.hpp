@@ -48,6 +48,9 @@ struct SelfAttentionCompleteEvent final : public LayerEvent<SelfAttentionComplet
 struct MLPBeginEvent final : public LayerEvent<MLPBeginEvent> {
   static constexpr const char* kTypeName = "MLPBegin";
 };
+struct MLPCompleteEvent final : public LayerEvent<MLPCompleteEvent> {
+  static constexpr const char* kTypeName = "MLPComplete";
+};
 
 inline auto makeRoPEInvFreq(int output_dim, float rope_theta) -> Tensor {
   auto inv_freq = Tensor::empty({output_dim / 2}, kFloat32, kCPU).alloc();
@@ -225,21 +228,41 @@ class Qwen3Text final : public nn::Module {
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 };
 
-class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
+class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {
  public:
-  explicit Qwen3ForCausalLM(const Qwen3Config& cfg)
-      : cfg(cfg),
-        kv_cache_(std::filesystem::path("./data/qwen3_i_kvcache"),  // working_dir
-                  cfg.max_cache_length,                             // max_cache_length
-                  cfg.num_hidden_layers,                            // layer_nums
-                  cfg.num_attention_heads,                          // q_heads
-                  cfg.num_key_value_heads,                          // kv_heads
-                  cfg.head_dim,                                     // kv_dims
-                  kFloat32,                                         // k_dtype
-                  kFloat32,                                         // v_dtype
-                  kCPU                                              // device_type
-        ) {
+  explicit Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, const std::filesystem::path& cache_dir = std::filesystem::path("./data/qwen3_i_kvcache"))
+      : cfg(cfg) {
     MLLM_INFO("Initializing intermittent version of qwen3")
+    
+    // 根据目录是否存在来选择初始化 kv_cache_ 的方式
+    std::filesystem::path metadata_path = cache_dir / "metadata.json";
+    
+    if (std::filesystem::exists(metadata_path)) {
+      // 目录存在，尝试恢复缓存
+      MLLM_INFO("Recovering PersistentCache from: {}", cache_dir.string());
+      auto recovered_cache = nn::PersistentCache::recover(cache_dir);
+      if (recovered_cache) {
+        kv_cache_ = recovered_cache;
+        MLLM_INFO("Successfully recovered PersistentCache");
+      } else {
+        MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to recover cache from {}", cache_dir.string());
+      }
+    } else {
+      // 目录不存在，创建新的缓存
+      MLLM_INFO("Creating new PersistentCache at: {}", cache_dir.string());
+      kv_cache_ = std::make_shared<nn::PersistentCache>(
+          cache_dir,                      // working_dir
+          cfg.max_cache_length,           // max_cache_length
+          cfg.num_hidden_layers,          // layer_nums
+          cfg.num_attention_heads,        // q_heads
+          cfg.num_key_value_heads,        // kv_heads
+          cfg.head_dim,                   // kv_dims
+          kFloat32,                       // k_dtype
+          kFloat32,                       // v_dtype
+          kCPU                            // device_type
+      );
+    }
+    
     eos_token_id_ = cfg.end_of_text_token_id;
     max_length_ = cfg.max_cache_length;
     tie_word_embeddings_ = cfg.tie_word_embeddings;
@@ -258,7 +281,6 @@ class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
   }
 
   ARGenerationOutputPast forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) override;
-
   nn::PersistentCache& kvCache();
 
   // 重置 token 计数器（在 clear/reset 时调用）
@@ -272,7 +294,7 @@ class Qwen3ForCausalLM : public ARGeneration, public nn::Module {
   Qwen3Text llm;
   nn::Linear lm_head_;
   bool tie_word_embeddings_;
-  nn::PersistentCache kv_cache_;
+  std::shared_ptr<nn::PersistentCache> kv_cache_;
   int token_counter_ = 0;
 };
 
