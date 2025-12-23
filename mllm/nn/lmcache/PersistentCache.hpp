@@ -7,36 +7,54 @@
 #include "mllm/core/Tensor.hpp"
 #include <filesystem>
 #include <memory>
+#include <vector>
 
 namespace mllm::nn {
 
-/* A persistent KV cache that can be saved to and restored from disk.
+/**
+ * @brief A persistent KV cache that can be saved to and restored from disk.
+ *
+ * This cache uses memory-mapped files (mmap) for efficient persistence.
+ * The KV data is stored in a binary file (kv.bin) and metadata including
+ * sequence counts and pending tokens is stored in JSON (metadata.json).
  *
  * Directory structure:
  *   working_dir/
- *     metadata.json   - Configuration and state information
- *     kv.bin          - Binary KV cache data
+ *     metadata.json   - Configuration, sequence counts, and pending tokens
+ *     kv.bin          - Binary KV cache data (mmap-backed)
  *
  * Usage:
- *   // Create new cache (similar to StaticCache interface)
- *   PersistentCache cache(working_dir, max_cache_length, layer_nums, q_heads, 
- *                          kv_heads, kv_dims, k_dtype, v_dtype, device_type);
+ *   // Create new cache
+ *   PersistentCache cache(working_dir, max_cache_length, layer_nums, q_heads,
+ *                         kv_heads, kv_dims, k_dtype, v_dtype, device_type);
  *   // ... use the cache ...
- *   cache.sync();
- *   // Later: auto recovered = PersistentCache::recover("./kvcache");
+ *   cache.sync();  // Persist to disk
+ *
+ *   // Later: recover from disk
+ *   auto recovered = PersistentCache::recover("./kvcache");
  */
 class PersistentCache : public AbstractStaticCache {
  public:
   using ptr_t = std::shared_ptr<PersistentCache>;
 
-  /* Constructor similar to StaticCache. Creates a new PersistentCache.
-   * Throws std::runtime_error if initialization fails.
+  /**
+   * @brief Creates a new PersistentCache.
+   * @throws std::runtime_error if initialization fails.
    */
-  PersistentCache(const std::filesystem::path& working_dir, int32_t max_cache_length, 
-                  int32_t layer_nums, int32_t q_heads, int32_t kv_heads, int32_t kv_dims,
-                  DataTypes k_dtype, DataTypes v_dtype, DeviceTypes device_type = kCPU);
+  PersistentCache(const std::filesystem::path& working_dir, 
+                  int32_t max_cache_length,
+                  int32_t layer_nums, 
+                  int32_t q_heads, 
+                  int32_t kv_heads, 
+                  int32_t kv_dims,
+                  DataTypes k_dtype, 
+                  DataTypes v_dtype, 
+                  DeviceTypes device_type = kCPU);
 
-  /* Recovers a PersistentCache from disk. Returns nullptr on failure. */
+  /**
+   * @brief Recovers a PersistentCache from disk.
+   * @return Shared pointer to recovered cache, or nullptr on failure.
+   */
   [[nodiscard]] static ptr_t recover(const std::filesystem::path& working_dir);
 
   ~PersistentCache();
@@ -47,7 +65,10 @@ class PersistentCache : public AbstractStaticCache {
   PersistentCache(PersistentCache&&) = delete;
   PersistentCache& operator=(PersistentCache&&) = delete;
 
-  /* Synchronizes the cache to disk. Returns true on success. */
+  /**
+   * @brief Synchronizes the cache to disk.
+   * @return true on success, false on failure.
+   */
   [[nodiscard]] bool sync();
 
   // AbstractStaticCache interface
@@ -57,10 +78,14 @@ class PersistentCache : public AbstractStaticCache {
   void clearCache() override;
   std::array<Tensor, 2> updateKVCache(int32_t layer_idx, Tensor k, Tensor v) override;
 
-  /* Get K and V cache views for a specific layer. */
+  /**
+   * @brief Get K and V cache views for a specific layer.
+   */
   std::array<Tensor, 2> getKVCache(int32_t layer_idx);
 
-  /* Mark cache as dirty (call after directly modifying cache data). */
+  /**
+   * @brief Mark cache as dirty (call after directly modifying cache data).
+   */
   void markDirty() noexcept { is_dirty_ = true; }
 
   [[nodiscard]] bool isDirty() const noexcept { return is_dirty_; }
@@ -91,11 +116,13 @@ class PersistentCache : public AbstractStaticCache {
   void* mapped_ptr_ = nullptr;
   size_t map_size_ = 0;
 
-  // Cache state
+  // Cache tensors (backed by mmap)
   Tensor k_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
   Tensor v_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
+  
+  // Sequence tracking
   std::vector<int32_t> seq_cnt_;        // Current sequence count per layer
-  std::vector<int32_t> saved_seq_cnt_;  // Persisted sequence count per layer
+  std::vector<int32_t> saved_seq_cnt_;  // Last synced sequence count per layer
   bool is_dirty_ = false;
 };
 

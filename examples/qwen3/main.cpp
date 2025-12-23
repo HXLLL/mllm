@@ -1,9 +1,11 @@
 #include <iostream>
 #include <fmt/core.h>
 #include <mllm/mllm.hpp>
-#include <mllm/models/qwen3/modeling_qwen3.hpp>
+#include <mllm/models/qwen3_i/modeling_qwen3_i.hpp>
 #include <mllm/models/qwen3/tokenization_qwen3.hpp>
 #include <mllm/utils/AnyValue.hpp>
+
+using Model = mllm::models::qwen3_i::Qwen3IntermittentForCausalLM;
 
 using mllm::Argparse;
 
@@ -36,7 +38,10 @@ MLLM_MAIN({
   {
     auto qwen3_cfg = mllm::models::qwen3::Qwen3Config(config_path.get());
     auto qwen3_tokenizer = mllm::models::qwen3::Qwen3Tokenizer(tokenizer_path.get());
-    auto qwen3 = mllm::models::qwen3::Qwen3ForCausalLM(qwen3_cfg);
+
+    std::string cache_dir = "./data/qwen3_i_kvcache";
+    std::filesystem::path cache_path = cache_dir.empty() ? std::filesystem::path("./data/qwen3_i_kvcache") : std::filesystem::path(cache_dir);
+    auto qwen3 = Model(qwen3_cfg, cache_path);
 
     auto param = mllm::load(model_path.get(), file_version);
     qwen3.load(param);
@@ -56,7 +61,10 @@ MLLM_MAIN({
       fmt::print("\n🤖 Response: ");
 
       // Use for loop
-      for (auto& step : qwen3.chat(inputs)) { std::wcout << qwen3_tokenizer.detokenize(step.cur_token_id) << std::flush; }
+      for (auto& step : qwen3.chat(inputs)) {
+        std::wcout << qwen3_tokenizer.detokenize(step.cur_token_id) << std::flush; 
+        qwen3.saveAllStates();
+      }
 
       fmt::print("\n{}\n", std::string(60, '-'));
     } catch (const std::exception& e) { fmt::print("\n❌ Error: {}\n{}\n", e.what(), std::string(60, '-')); }

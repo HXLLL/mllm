@@ -5,11 +5,13 @@
 #include <memory>
 #include <chrono>
 #include <filesystem>
+#include <iostream>
 
 #include "BenchmarkTemplate.hpp"
 #include <mllm/mllm.hpp>
 #include <mllm/models/qwen3_i/modeling_qwen3_i.hpp>
 #include <mllm/models/qwen3/configuration_qwen3.hpp>
+#include <mllm/models/qwen3/tokenization_qwen3.hpp>
 
 class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
  public:
@@ -28,7 +30,7 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
     // Create model with cache directory
     std::filesystem::path cache_path = cache_dir.empty() ? std::filesystem::path("./data/qwen3_i_kvcache") : std::filesystem::path(cache_dir);
     model_ = std::make_unique<Qwen3IntermittentForCausalLM>(*config_, cache_path);
-    
+
     // Load weights
     auto param = mllm::load(model_path, mllm::ModelFileVersion::kV2);
     model_->load(param);
@@ -68,39 +70,7 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
   }
 
   void warmup() override {
-    if (!model_) {
-      mllm::print("Model not initialized");
-      return;
-    }
-    
-    // Create a small dummy input for warmup (e.g., 8 tokens)
-    const int32_t warmup_length = 8;
-    const int32_t warmup_gen = 4;
-    
-    mllm::print("Warming up with", warmup_length, "tokens prefill and", warmup_gen, "tokens generation...");
-    
-    // Create input with proper memory type
-    auto input_ids = mllm::Tensor::empty({1, warmup_length}, mllm::kInt64, mllm::kCPU)
-                         .setMemType(mllm::kNormal)
-                         .alloc();
-    auto ptr = input_ids.ptr<mllm::mllm_int64_t>();
-    for (int i = 0; i < warmup_length; ++i) {
-      ptr[i] = 1;  // Use token id 1
-    }
-    
-    mllm::models::ARGenerationOutputPast inputs;
-    inputs["sequence"] = input_ids;
-    
-    mllm::models::ARGenerationArgs args;
-    int max_len = warmup_gen;
-    bool do_sample = false;
-    args["max_length"] = mllm::AnyValue(max_len);
-    args["do_sample"] = mllm::AnyValue(do_sample);
-    
-    // Run warmup
-    model_->generate(inputs, args);
-    
-    mllm::print("Warmup completed");
+    // No warmup needed for intermittent mode
   }
 
   void clear() override {
@@ -108,10 +78,13 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
       return;
     }
     
-    // Clear KV cache by resetting sequence count
-    model_->kvCache().setCurrentSeqCnt(0);
-    // Reset token counter for tracing
-    model_->resetTokenCounter();
+    // Don't clear if there's pending work to resume
+    if (model_->hasPendingWork()) {
+      return;
+    }
+    
+    // Clear all state including KV cache, token counter, and pending tokens
+    model_->clearAllState();
   }
 
   BenchmarkTemplateResult run(int32_t pp, int32_t tg) override {
@@ -145,6 +118,7 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
     
     bool first_token = true;
     int token_count = 0;
+    int num_tokens = 0;
     
     model_->streamGenerate(inputs, args, [&](int64_t token_id) {
       if (first_token) {
@@ -153,8 +127,9 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
       }
       token_count++;
       decode_end = std::chrono::high_resolution_clock::now();
+      num_tokens++;
+      mllm::print("Token", num_tokens, ":", token_id);
     });
-    
     // Calculate durations
     auto prefill_duration = std::chrono::duration_cast<std::chrono::microseconds>(decode_start - prefill_start).count();
     auto decode_duration = std::chrono::duration_cast<std::chrono::microseconds>(decode_end - decode_start).count();
@@ -185,4 +160,5 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
  private:
   std::unique_ptr<Qwen3Config> config_;
   std::unique_ptr<Qwen3IntermittentForCausalLM> model_;
+  std::unique_ptr<mllm::models::qwen3::Qwen3Tokenizer> tokenizer_;
 };

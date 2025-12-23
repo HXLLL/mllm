@@ -19,9 +19,20 @@
 
 namespace mllm::nn {
 
-PersistentCache::PersistentCache(const std::filesystem::path& working_dir, int32_t max_cache_length,
-                                 int32_t layer_nums, int32_t q_heads, int32_t kv_heads, int32_t kv_dims,
-                                 DataTypes k_dtype, DataTypes v_dtype, DeviceTypes device_type)
+// ============================================================================
+// Constructor / Destructor
+// ============================================================================
+
+PersistentCache::PersistentCache(
+    const std::filesystem::path& working_dir, 
+    int32_t max_cache_length,
+    int32_t layer_nums, 
+    int32_t q_heads, 
+    int32_t kv_heads, 
+    int32_t kv_dims,
+    DataTypes k_dtype, 
+    DataTypes v_dtype, 
+    DeviceTypes device_type)
     : working_dir_(working_dir),
       device_type_(device_type),
       k_dtype_(k_dtype),
@@ -34,6 +45,7 @@ PersistentCache::PersistentCache(const std::filesystem::path& working_dir, int32
       seq_cnt_(layer_nums, 0),
       saved_seq_cnt_(layer_nums, 0),
       is_dirty_(true) {
+  
   MLLM_RT_ASSERT(device_type_ == kCPU);
 
   // Create working directory
@@ -43,54 +55,15 @@ PersistentCache::PersistentCache(const std::filesystem::path& working_dir, int32
     MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to create PersistentCache directory: {}", working_dir_.string());
   }
 
-  // Initialize mmap
+  // Initialize memory-mapped file
   if (!initMmap()) {
     MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to initialize mmap for PersistentCache: {}", working_dir_.string());
   }
   initTensorsFromMmap();
 }
 
-PersistentCache::ptr_t PersistentCache::recover(const std::filesystem::path& working_dir) {
-  const auto metadata_path = working_dir / "metadata.json";
-  std::ifstream file(metadata_path);
-  if (!file) return nullptr;
-
-  try {
-    nlohmann::json j;
-    file >> j;
-
-    // Read parameters from metadata
-    auto max_cache_length = j.at("max_cache_length").get<int32_t>();
-    auto layer_nums = j.at("layer_nums").get<int32_t>();
-    auto q_heads = j.at("q_heads").get<int32_t>();
-    auto kv_heads = j.at("kv_heads").get<int32_t>();
-    auto kv_dims = j.at("kv_dims").get<int32_t>();
-    auto k_dtype = static_cast<DataTypes>(j.at("k_dtype").get<int>());
-    auto v_dtype = static_cast<DataTypes>(j.at("v_dtype").get<int>());
-
-    // Use public constructor to create the cache
-    auto cache = std::make_shared<PersistentCache>(working_dir, max_cache_length, layer_nums, q_heads, kv_heads,
-                                                    kv_dims, k_dtype, v_dtype, kCPU);
-
-    // Mark as not dirty since we're recovering existing data
-    cache->is_dirty_ = false;
-
-    // Restore sequence counts
-    if (j.contains("saved_seq_cnts")) {
-      auto& cnts = j["saved_seq_cnts"];
-      for (int32_t i = 0; i < layer_nums && i < static_cast<int32_t>(cnts.size()); ++i) {
-        cache->seq_cnt_[i] = cache->saved_seq_cnt_[i] = cnts[i].get<int32_t>();
-      }
-    }
-
-    return cache;
-  } catch (...) {
-    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to recover PersistentCache from: {}", working_dir.string());
-    return nullptr;
-  }
-}
-
 PersistentCache::~PersistentCache() {
+  // Clear tensor references before unmapping
   k_cache_ = Tensor::nil();
   v_cache_ = Tensor::nil();
 
@@ -101,6 +74,56 @@ PersistentCache::~PersistentCache() {
     close(fd_);
   }
 }
+
+// ============================================================================
+// Static Factory
+// ============================================================================
+
+PersistentCache::ptr_t PersistentCache::recover(const std::filesystem::path& working_dir) {
+  const auto metadata_path = working_dir / "metadata.json";
+  std::ifstream file(metadata_path);
+  if (!file) return nullptr;
+
+  try {
+    nlohmann::json j;
+    file >> j;
+
+    // Read cache configuration
+    const auto max_cache_length = j.at("max_cache_length").get<int32_t>();
+    const auto layer_nums = j.at("layer_nums").get<int32_t>();
+    const auto q_heads = j.at("q_heads").get<int32_t>();
+    const auto kv_heads = j.at("kv_heads").get<int32_t>();
+    const auto kv_dims = j.at("kv_dims").get<int32_t>();
+    const auto k_dtype = static_cast<DataTypes>(j.at("k_dtype").get<int>());
+    const auto v_dtype = static_cast<DataTypes>(j.at("v_dtype").get<int>());
+
+    // Create cache instance
+    auto cache = std::make_shared<PersistentCache>(
+        working_dir, max_cache_length, layer_nums, q_heads, kv_heads,
+        kv_dims, k_dtype, v_dtype, kCPU);
+
+    // Mark as not dirty since we're recovering existing data
+    cache->is_dirty_ = false;
+
+    // Restore sequence counts
+    if (j.contains("saved_seq_cnts")) {
+      const auto& cnts = j["saved_seq_cnts"];
+      for (int32_t i = 0; i < layer_nums && i < static_cast<int32_t>(cnts.size()); ++i) {
+        cache->seq_cnt_[i] = cache->saved_seq_cnt_[i] = cnts[i].get<int32_t>();
+      }
+    }
+
+    return cache;
+  } catch (const std::exception& e) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to recover PersistentCache from {}: {}", 
+                    working_dir.string(), e.what());
+    return nullptr;
+  }
+}
+
+// ============================================================================
+// Memory Mapping
+// ============================================================================
 
 size_t PersistentCache::cacheBytes() const {
   return static_cast<size_t>(layer_nums_) * q_heads_ * max_cache_length_ * kv_dims_ *
@@ -143,6 +166,10 @@ void PersistentCache::initTensorsFromMmap() {
   v_cache_.impl()->storage()->mem_type_ = kManual;
 }
 
+// ============================================================================
+// Persistence
+// ============================================================================
+
 bool PersistentCache::saveMetadata() const {
   nlohmann::json j = {
       {"max_cache_length", max_cache_length_},
@@ -164,7 +191,7 @@ bool PersistentCache::saveMetadata() const {
 bool PersistentCache::sync() {
   if (!is_dirty_) return true;
 
-  // msync only writes back dirty pages
+  // msync writes back dirty pages asynchronously
   if (msync(mapped_ptr_, map_size_, MS_ASYNC) != 0) return false;
   if (!saveMetadata()) return false;
 
@@ -172,6 +199,10 @@ bool PersistentCache::sync() {
   is_dirty_ = false;
   return true;
 }
+
+// ============================================================================
+// Cache Operations
+// ============================================================================
 
 int32_t PersistentCache::getCurrentSeqCnt(int32_t layer_idx) const {
   return seq_cnt_[layer_idx];
@@ -196,9 +227,9 @@ std::array<Tensor, 2> PersistentCache::updateKVCache(int32_t layer_idx, Tensor k
   const auto seq_len = k.shape()[2];
   const auto repeat = q_heads_ / kv_heads_;
   const auto cur_seq = seq_cnt_[layer_idx];
-
   const size_t copy_bytes = seq_len * kv_dims_ * bytesOfType(k_dtype_) / lanesOfType(k_dtype_);
 
+  // Copy K and V to cache with GQA expansion
   for (int h = 0; h < kv_heads_; ++h) {
     for (int r = 0; r < repeat; ++r) {
       const int dst_h = h * repeat + r;

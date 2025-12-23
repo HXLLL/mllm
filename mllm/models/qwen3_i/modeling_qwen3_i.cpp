@@ -8,18 +8,27 @@
 #include "mllm/utils/Tracing.hpp"
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 namespace mllm::models::qwen3_i {
+
+// ============================================================================
+// Tracing Events
+// ============================================================================
 
 template<typename Derived>
 class LayerEvent : public Event {
  public:
-  LayerEvent(int layer_idx, int seq_len, int token_idx) : layer_idx_(layer_idx), seq_len_(seq_len), token_idx_(token_idx) {}
+  LayerEvent(int layer_idx, int seq_len, int token_idx) 
+      : layer_idx_(layer_idx), seq_len_(seq_len), token_idx_(token_idx) {}
+  
   [[nodiscard]] std::map<std::string, std::string> toData() const override {
     return {{"layer_idx", std::to_string(layer_idx_)},
             {"seq_len", std::to_string(seq_len_)},
             {"token_idx", std::to_string(token_idx_)}};
   }
+  
   [[nodiscard]] const char* typeName() const noexcept override {
     return Derived::kTypeName;
   }
@@ -34,98 +43,94 @@ struct LayerBeginEvent final : public LayerEvent<LayerBeginEvent> {
   using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "LayerBegin";
 };
+
 struct LayerCompleteEvent final : public LayerEvent<LayerCompleteEvent> {
   using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "LayerComplete";
 };
+
 struct KVCacheCompleteEvent final : public LayerEvent<KVCacheCompleteEvent> {
   using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "KVCacheComplete";
 };
+
 struct SelfAttentionCompleteEvent final : public LayerEvent<SelfAttentionCompleteEvent> {
   using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "SelfAttentionComplete";
 };
+
 struct MLPBeginEvent final : public LayerEvent<MLPBeginEvent> {
   using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "MLPBegin";
 };
+
 struct MLPCompleteEvent final : public LayerEvent<MLPCompleteEvent> {
   using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "MLPComplete";
 };
+
 struct SyncStartEvent final : public LayerEvent<SyncStartEvent> {
   using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "SyncStart";
 };
+
 struct SyncCompleteEvent final : public LayerEvent<SyncCompleteEvent> {
   using LayerEvent::LayerEvent;
   static constexpr const char* kTypeName = "SyncComplete";
 };
 
-template< typename EventType>
-static inline void record_event(int layer_idx, int seq_len, int token_idx) {
+template<typename EventType>
+static inline void recordEvent(int layer_idx, int seq_len, int token_idx) {
   Context::instance().tracer()->record<EventType>(layer_idx, seq_len, token_idx);
 }
 
+// ============================================================================
+// RoPE Utilities
+// ============================================================================
+
 static Tensor makeRoPEInvFreq(int output_dim, float rope_theta) {
   auto inv_freq = Tensor::empty({output_dim / 2}, kFloat32, kCPU).alloc();
-  auto inv_freq_ptr = inv_freq.ptr<float>();
-  for (int i = 0; i < output_dim / 2; i++) { inv_freq_ptr[i] = 1.0 / std::pow(rope_theta, 2.0 * i / output_dim); }
+  auto* ptr = inv_freq.ptr<float>();
+  for (int i = 0; i < output_dim / 2; i++) {
+    ptr[i] = 1.0f / std::pow(rope_theta, 2.0f * i / output_dim);
+  }
   return inv_freq;
 }
 
-static std::pair<Tensor, Tensor> makeRotaryPosEmbedding(Tensor& position_ids, const Tensor& inv_freq, float attention_scaling) {
-  // ========== 1. 获取维度信息 ==========
-  auto batch_size = position_ids.shape()[0];  // 批次大小
-  auto seq_len = position_ids.shape()[1];     // 序列长度
-  auto inv_freq_len = inv_freq.shape()[0];    // 逆频率向量长度（通常是 dim/2）
-  auto dim = inv_freq_len * 2;                // 完整维度（head_dim）
+static std::pair<Tensor, Tensor> makeRotaryPosEmbedding(
+    const Tensor& position_ids, 
+    const Tensor& inv_freq, 
+    float attention_scaling) {
+  
+  const auto batch_size = position_ids.shape()[0];
+  const auto seq_len = position_ids.shape()[1];
+  const auto inv_freq_len = inv_freq.shape()[0];
+  const auto dim = inv_freq_len * 2;
 
-  // ========== 2. 计算频率矩阵 ==========
-  // 将位置编码与逆频率向量相乘，得到每个位置、每个维度的频率
-  // 计算公式: freqs[b, s, d] = position_ids[b, s] * inv_freq[d]
-  // 输出形状: [B, S, inv_freq_len]
-  auto freqs = Tensor::empty({batch_size, seq_len, inv_freq_len}, kFloat32, kCPU).alloc();
-  auto freqs_ptr = freqs.ptr<float>();
-  auto position_ids_ptr = position_ids.ptr<int64_t>();
-  auto inv_freq_ptr = inv_freq.ptr<float>();
-
-  // 计算频率矩阵（相当于广播乘法）
-  for (int b = 0; b < batch_size; ++b) {
-    for (int s = 0; s < seq_len; ++s) {
-      auto pos = position_ids_ptr[b * seq_len + s];
-      for (int d = 0; d < inv_freq_len; ++d) {
-        freqs_ptr[b * seq_len * inv_freq_len + s * inv_freq_len + d] = static_cast<float>(pos) * inv_freq_ptr[d];
-      }
-    }
-  }
-
-  // ========== 3. 创建正弦和余弦嵌入张量 ==========
-  // 为每个位置、每个维度计算 sin 和 cos 值
-  // 输出形状: [B, S, dim]
+  // Create sin/cos embeddings with [freqs, freqs] pattern
   auto sin_emb = Tensor::empty({batch_size, seq_len, dim}, kFloat32, kCPU).alloc();
   auto cos_emb = Tensor::empty({batch_size, seq_len, dim}, kFloat32, kCPU).alloc();
-  auto sin_ptr = sin_emb.ptr<float>();
-  auto cos_ptr = cos_emb.ptr<float>();
+  auto* sin_ptr = sin_emb.ptr<float>();
+  auto* cos_ptr = cos_emb.ptr<float>();
+  const auto* position_ids_ptr = position_ids.ptr<int64_t>();
+  const auto* inv_freq_ptr = inv_freq.ptr<float>();
 
-  // ========== 4. 计算正弦和余弦值 ==========
-  // 对频率矩阵应用 sin 和 cos 函数，得到旋转角度
-  // 由于 RoPE 使用成对的维度进行旋转，所以将频率值复制到两个维度
-  // 模式: [freqs, freqs] - 前半部分和后半部分使用相同的频率值
+  // Compute frequencies and sin/cos in a single pass
   for (int b = 0; b < batch_size; ++b) {
     for (int s = 0; s < seq_len; ++s) {
+      const auto pos = static_cast<float>(position_ids_ptr[b * seq_len + s]);
+      const int base_idx = b * seq_len * dim + s * dim;
+      
       for (int d = 0; d < inv_freq_len; ++d) {
-        auto freq = freqs_ptr[b * seq_len * inv_freq_len + s * inv_freq_len + d];
-        // 应用缩放因子并计算 sin/cos
-        auto sin_val = std::sin(freq) * attention_scaling;
-        auto cos_val = std::cos(freq) * attention_scaling;
+        const auto freq = pos * inv_freq_ptr[d];
+        const auto sin_val = std::sin(freq) * attention_scaling;
+        const auto cos_val = std::cos(freq) * attention_scaling;
 
-        // 将相同的值存储到两个对应的维度位置（实现 [freqs, freqs] 模式）
-        sin_ptr[b * seq_len * dim + s * dim + d] = sin_val;
-        sin_ptr[b * seq_len * dim + s * dim + d + inv_freq_len] = sin_val;
-        cos_ptr[b * seq_len * dim + s * dim + d] = cos_val;
-        cos_ptr[b * seq_len * dim + s * dim + d + inv_freq_len] = cos_val;
+        // Store to both halves (RoPE [freqs, freqs] pattern)
+        sin_ptr[base_idx + d] = sin_val;
+        sin_ptr[base_idx + d + inv_freq_len] = sin_val;
+        cos_ptr[base_idx + d] = cos_val;
+        cos_ptr[base_idx + d + inv_freq_len] = cos_val;
       }
     }
   }
@@ -133,21 +138,71 @@ static std::pair<Tensor, Tensor> makeRotaryPosEmbedding(Tensor& position_ids, co
   return {sin_emb, cos_emb};
 }
 
+// ============================================================================
+// GenerationState Implementation
+// ============================================================================
+
+void GenerationState::save(const std::filesystem::path& path) const {
+  nlohmann::json j;
+  if (!input_tokens.empty()) j["input_tokens"] = input_tokens;
+  if (!output_tokens.empty()) j["output_tokens"] = output_tokens;
+  
+  std::ofstream file(path);
+  if (file) file << j.dump(2);
+}
+
+GenerationState GenerationState::load(const std::filesystem::path& path) {
+  GenerationState state;
+  std::ifstream file(path);
+  if (!file) return state;
+  
+  try {
+    nlohmann::json j;
+    file >> j;
+    if (j.contains("input_tokens")) state.input_tokens = j["input_tokens"].get<std::vector<int64_t>>();
+    if (j.contains("output_tokens")) state.output_tokens = j["output_tokens"].get<std::vector<int64_t>>();
+  } catch (...) {
+    // Return empty state on parse error
+  }
+  return state;
+}
+
+int GenerationState::getResumeOffset(const Tensor& input, int kv_seq_cnt) const {
+  const int input_len = input.shape()[1];
+  
+  // No cached input: fresh start
+  if (input_tokens.empty()) return -1;
+  
+  // Check if input matches cached
+  if (static_cast<int>(input_tokens.size()) != input_len) return -1;
+  
+  const auto* ptr = input.ptr<int64_t>();
+  if (!std::equal(ptr, ptr + input_len, input_tokens.begin())) return -1;
+  
+  // Input matches: return KV cache progress (clamped to input length)
+  return std::min(kv_seq_cnt, input_len);
+}
+
+// ============================================================================
+// Qwen3MLP Implementation
+// ============================================================================
+
 Qwen3MLP::Qwen3MLP(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
   gate_proj_ = reg<nn::Linear>("gate_proj", cfg.hidden_size, cfg.intermediate_size, false, cfg.linear_impl_type);
-  silu_ = reg<nn::SiLU>("act");
   up_proj_ = reg<nn::Linear>("up_proj", cfg.hidden_size, cfg.intermediate_size, false, cfg.linear_impl_type);
   down_proj_ = reg<nn::Linear>("down_proj", cfg.intermediate_size, cfg.hidden_size, false, cfg.linear_impl_type);
+  silu_ = reg<nn::SiLU>("act");
 }
 
 std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  auto x = gate_proj_(inputs[0]);
-  x = silu_(x);
-  auto y = up_proj_(inputs[0]);
-  x = x * y;
-  x = down_proj_(x);
-  return {x};
+  auto x = silu_(gate_proj_(inputs[0]));
+  x = x * up_proj_(inputs[0]);
+  return {down_proj_(x)};
 }
+
+// ============================================================================
+// Qwen3Attention Implementation
+// ============================================================================
 
 Qwen3Attention::Qwen3Attention(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
   hidden_size_ = cfg.hidden_size;
@@ -170,92 +225,54 @@ Qwen3Attention::Qwen3Attention(const std::string& name, const Qwen3Config& cfg) 
   mask_ = reg<nn::CausalMask>("mask");
   softmax_ = reg<nn::Softmax>("softmax", -1);
 }
+
 std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  auto x = inputs[0];
-  auto llm_embedding_sin = inputs[1];
-  auto llm_embedding_cos = inputs[2];
-  auto past_kv_cache = args[0].get<nn::PersistentCache*>();
+  const auto& x = inputs[0];
+  const auto& sin_emb = inputs[1];
+  const auto& cos_emb = inputs[2];
+  auto* kv_cache = args[0].get<nn::PersistentCache*>();
 
-  // ========== 2. 线性投影生成 Q、K、V ==========
-  // 通过三个独立的线性层将输入投影为 Query、Key、Value
-  // 输出形状: [B, S, H * D] (对于 Q) 或 [B, S, KV_H * D] (对于 K、V)
-  auto query_states = q_proj_(x);
-  auto key_states = k_proj_(x);
-  auto value_states = v_proj_(x);
+  const int B = x.shape()[0];
+  const int S = x.shape()[1];
 
-  int B = inputs[0].shape()[0];  // Batch size: 批次大小
-  int S = inputs[0].shape()[1];  // Sequence length: 序列长度
+  // Project to Q, K, V
+  auto query = q_proj_(x).view({B, S, num_attention_heads_, head_dim_});
+  auto key = k_proj_(x).view({B, S, num_key_value_heads_, head_dim_});
+  auto value = v_proj_(x).view({B, S, num_key_value_heads_, head_dim_});
 
-  // ========== 4. Reshape 为多头格式 ==========
-  // 将 Q、K、V 从 [B, S, H*D] 重塑为 [B, S, H, D] 的多头格式
-  // 这样每个头可以独立计算注意力
-  // 注意：K 和 V 使用 num_key_value_heads_（可能小于 num_attention_heads_，支持分组查询注意力）
-  query_states = query_states.view({B, S, num_attention_heads_, head_dim_});
-  key_states = key_states.view({B, S, num_key_value_heads_, head_dim_});
-  value_states = value_states.view({B, S, num_key_value_heads_, head_dim_});
+  // Apply QK normalization
+  query = rms_norm_q_(query);
+  key = rms_norm_k_(key);
 
-  // [B, S, H, D]
-  query_states = rms_norm_q_(query_states);
-  key_states = rms_norm_k_(key_states);
+  // Transpose to [B, H, S, D] for attention computation
+  query = query.transpose(1, 2);
+  key = key.transpose(1, 2);
+  value = value.transpose(1, 2);
 
-  // ========== 6. 转置维度，将头维度提前 ==========
-  // 从 [B, S, H, D] 转置为 [B, H, S, D]
-  // 这样便于后续的矩阵乘法操作（每个头独立计算）
-  query_states = query_states.transpose(1, 2);
-  key_states = key_states.transpose(1, 2);
-  value_states = value_states.transpose(1, 2);
+  // Apply RoPE
+  query = q_rope_(query, sin_emb, cos_emb);
+  key = k_rope_(key, sin_emb, cos_emb);
 
-  // ========== 7. 应用 RoPE (Rotary Position Embedding) 位置编码 ==========
-  // 对 Query 和 Key 应用旋转位置编码，将位置信息注入到注意力计算中
-  // RoPE 通过旋转矩阵的方式编码位置，相比绝对位置编码更优雅
-  // 输出形状保持不变: [B, H, S, D]
-  query_states = q_rope_(query_states, llm_embedding_sin, llm_embedding_cos);
-  key_states = k_rope_(key_states, llm_embedding_sin, llm_embedding_cos);
-
-  // ========== 8. 更新 KV Cache ==========
-  // 将当前的 K、V 状态与历史缓存合并（用于增量解码）
-  // 在预填充阶段，直接存储；在解码阶段，追加到缓存末尾
-  // 输出形状: [B, H, S_cache, D]，其中 S_cache 是累积的序列长度
-  auto [key_states_new, value_states_new] = past_kv_cache->updateKVCache(layer_idx_, key_states, value_states);
-  key_states = key_states_new;
-  value_states = value_states_new;
-
+  // Update KV cache
+  auto [cached_key, cached_value] = kv_cache->updateKVCache(layer_idx_, key, value);
   Context::instance().tracer()->record<KVCacheCompleteEvent>(layer_idx_, S, 0);
 
-  // ========== 9. 计算注意力分数 ==========
-  // 计算 Q @ K^T，得到注意力权重矩阵
-  // 然后应用缩放因子 (1/sqrt(head_dim))，防止点积过大导致梯度消失
-  // 应用因果掩码（causal mask），确保只能看到当前位置及之前的信息
-  // 最后通过 softmax 归一化，得到注意力权重
-  // 输出形状: [B, H, S, S_cache] (S 是当前序列长度，S_cache 是累积长度)
-  Tensor attn;
-  if (key_states.dtype() == kFloat32) {
-    // Float32 路径：直接计算
-    attn = nn::functional::matmul(query_states, key_states, false, true) * (1.f / sqrtf(head_dim_));
-    attn = mask_(attn);      // 应用因果掩码
-    attn = softmax_(attn);   // Softmax 归一化
-  } else if (key_states.dtype() == kFloat16) {
-    // Float16 路径：先转换为 Float32 计算（提高精度），再转回 Float16
-    attn = nn::functional::matmul(query_states.to(kFloat32), key_states.to(kFloat32), false, true) * (1.f / sqrtf(head_dim_));
-    attn = mask_(attn);
-    attn = softmax_(attn);
-    attn = attn.to(kFloat16);
-  }
+  // Compute attention scores with scaling
+  const float scale = 1.f / sqrtf(static_cast<float>(head_dim_));
+  Tensor attn = (cached_key.dtype() == kFloat32)
+      ? softmax_(mask_(nn::functional::matmul(query, cached_key, false, true) * scale))
+      : softmax_(mask_(nn::functional::matmul(query.to(kFloat32), cached_key.to(kFloat32), false, true) * scale)).to(kFloat16);
 
-  // ========== 10. 计算注意力输出 ==========
-  // 使用注意力权重对 Value 进行加权求和: attn @ V
-  // 输出形状: [B, H, S, D]
-  auto output = nn::functional::matmul(attn, value_states);
-
-  // ========== 11. 重塑并输出投影 ==========
-  // 将多头输出合并：先转置回 [B, S, H, D]，再 reshape 为 [B, S, H*D]
-  // 最后通过输出投影层 o_proj_，将维度映射回 hidden_size
-  // 输出形状: [B, S, hidden_size]
+  // Compute output
+  auto output = nn::functional::matmul(attn, cached_value);
   output = output.transpose(1, 2).view({B, S, num_attention_heads_ * head_dim_});
-  output = o_proj_(output);
-
-  return {output};
+  
+  return {o_proj_(output)};
 }
+
+// ============================================================================
+// Qwen3Decoder Implementation
+// ============================================================================
 
 Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
   self_attn_ = reg<Qwen3Attention>("self_attn", cfg);
@@ -265,245 +282,344 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg) : nn
 }
 
 std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  // ========== 1. 获取输入参数 ==========
-  // inputs[0]: 输入张量，形状为 [B, S, hidden_size]
-  // inputs[1]: RoPE 位置编码的正弦值
-  // inputs[2]: RoPE 位置编码的余弦值
-  // args[0]: KV cache，用于存储历史注意力状态
-  auto llm_embedding_sin = inputs[1];
-  auto llm_embedding_cos = inputs[2];
-  auto& kv_cache = args[0];
+  const auto& hidden_states = inputs[0];
+  const auto& sin_emb = inputs[1];
+  const auto& cos_emb = inputs[2];
+  const auto& kv_cache = args[0];
+  const int seq_len = hidden_states.shape()[1];
 
-  // ========== 2. Pre-Attention 归一化 ==========
-  // 在自注意力计算之前，对输入进行 RMSNorm 归一化
-  // 这是 Pre-Norm 架构（与 Post-Norm 相对），有助于训练稳定性
-  // 输入形状: [B, S, hidden_size]
-  // 输出形状: [B, S, hidden_size]
-  auto x = input_layer_norm_(inputs[0]);
+  // Self-attention with residual
+  auto attn_output = self_attn_(input_layer_norm_(hidden_states), sin_emb, cos_emb, kv_cache)[0];
+  recordEvent<SelfAttentionCompleteEvent>(self_attn_.layer_idx_, seq_len, 0);
+  auto residual = attn_output + hidden_states;
 
-  // ========== 3. 自注意力计算 ==========
-  // 计算多头自注意力，包括 Q、K、V 投影、RoPE 位置编码、注意力计算等
-  // 输出形状: [B, S, hidden_size]
-  x = self_attn_(x, llm_embedding_sin, llm_embedding_cos, kv_cache)[0];
+  // MLP with residual
+  recordEvent<MLPBeginEvent>(self_attn_.layer_idx_, seq_len, 0);
+  auto mlp_output = mlp_(post_attention_layer_norm_(residual))[0];
+  recordEvent<MLPCompleteEvent>(self_attn_.layer_idx_, seq_len, 0);
 
-  record_event<SelfAttentionCompleteEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
-
-  // ========== 4. 残差连接（注意力分支） ==========
-  // 将注意力输出与原始输入相加，实现残差连接
-  // 这有助于梯度流动和模型训练
-  // 输出形状: [B, S, hidden_size]
-  auto tmp = x + inputs[0];
-
-  // ========== 5. Pre-MLP 归一化 ==========
-  // 在 MLP 计算之前，对注意力输出进行归一化
-  // 输入形状: [B, S, hidden_size]
-  // 输出形状: [B, S, hidden_size]
-  x = post_attention_layer_norm_(tmp);
-
-  record_event<MLPBeginEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
-  // ========== 6. MLP 前向传播 ==========
-  // 通过 MLP（多层感知机）进行非线性变换
-  // MLP 包含 gate_proj、SiLU 激活、up_proj、down_proj 等操作
-  // 输出形状: [B, S, hidden_size]
-  x = mlp_(x)[0];
-
-  record_event<MLPCompleteEvent>(self_attn_.layer_idx_, inputs[0].shape()[1], 0);
-
-  // ========== 7. 残差连接（MLP 分支） ==========
-  // 将 MLP 输出与注意力分支的输出相加，完成第二个残差连接
-  // 最终输出形状: [B, S, hidden_size]
-  x = x + tmp;
-
-  return {x};
+  return {mlp_output + residual};
 }
 
-Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg) : nn::Module(name), chunksize_(1) {
+// ============================================================================
+// Qwen3Text Implementation
+// ============================================================================
+
+Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
   decode_blocks_ = reg<nn::ModuleList<Qwen3Decoder>>("layers", cfg.num_hidden_layers, cfg);
-  for (auto [idx, b] : enumerate(decode_blocks_.list())) { b.self_attn_.layer_idx_ = idx; }
+  for (auto [idx, block] : enumerate(decode_blocks_.list())) {
+    block.self_attn_.layer_idx_ = idx;
+  }
   norm_ = reg<nn::RMSNorm>("norm", cfg.rms_norm_eps);
   embedding_ = reg<nn::Embedding>("embed_tokens", cfg.vocab_size, cfg.hidden_size);
 }
 
 std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  auto& blocks = decode_blocks_.list();
-
-  // ========== 获取输入参数 ==========
-  // inputs[0]: token IDs，形状为 [B, S]，每个元素是词汇表中的索引
-  // inputs[1]: RoPE 位置编码的正弦值
-  // inputs[2]: RoPE 位置编码的余弦值
-  // args[0]: KV cache，用于存储所有层的注意力状态
-  // args[1]: 当前 token 序号（可选）
   const auto& token_ids = inputs[0];
-  const auto& llm_embedding_sin = inputs[1];
-  const auto& llm_embedding_cos = inputs[2];
-  auto& kv_cache = args[0];
+  const auto& sin_emb = inputs[1];
+  const auto& cos_emb = inputs[2];
+  const auto& kv_cache = args[0];
   int token_idx = (args.size() > 1) ? args[1].get<int>() : 0;
-  int seq_len = token_ids.shape()[1];
-
-  int num_chunks = (seq_len + chunksize_ - 1) / chunksize_;
+  
+  const int seq_len = token_ids.shape()[1];
+  const int num_chunks = (seq_len + chunksize_ - 1) / chunksize_;
+  
   std::vector<Tensor> chunk_outputs;
   chunk_outputs.reserve(num_chunks);
 
   for (int chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
-    int chunk_start = chunk_idx * chunksize_;
-    int chunk_end = std::min(chunk_start + chunksize_, seq_len);
-    int chunk_len = chunk_end - chunk_start;
+    const int chunk_start = chunk_idx * chunksize_;
+    const int chunk_end = std::min(chunk_start + chunksize_, seq_len);
+    const int chunk_len = chunk_end - chunk_start;
 
-    auto x_chunk = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
+    // Embed and slice position encodings for this chunk
+    auto x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
+    auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
+    auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
 
-    auto sin_chunk = llm_embedding_sin[{kAll, {chunk_start, chunk_end}, kAll}];
-    auto cos_chunk = llm_embedding_cos[{kAll, {chunk_start, chunk_end}, kAll}];
-
-    for (int i = 0; i < blocks.size(); i++) {
-      auto& block = blocks[i];
-      record_event<LayerBeginEvent>(i, chunk_len, token_idx);
-      x_chunk = block(x_chunk, sin_chunk, cos_chunk, kv_cache)[0];
-      record_event<LayerCompleteEvent>(i, chunk_len, token_idx);
+    // Process through all decoder layers
+    for (int i = 0; i < static_cast<int>(decode_blocks_.list().size()); i++) {
+      recordEvent<LayerBeginEvent>(i, chunk_len, token_idx);
+      x = decode_blocks_.list()[i](x, sin_chunk, cos_chunk, kv_cache)[0];
+      recordEvent<LayerCompleteEvent>(i, chunk_len, token_idx);
     }
 
-    chunk_outputs.push_back(x_chunk);
+    chunk_outputs.push_back(x);
     token_idx += chunk_len;
 
-    record_event<SyncStartEvent>(0, chunk_len, token_idx);
+    // Sync KV cache to disk after each chunk
+    recordEvent<SyncStartEvent>(0, chunk_len, token_idx);
     if (!kv_cache.get<nn::PersistentCache*>()->sync()) {
-      MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to sync kv cache");
+      MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to sync KV cache");
     }
-    record_event<SyncCompleteEvent>(0, chunk_len, token_idx);
+    recordEvent<SyncCompleteEvent>(0, chunk_len, token_idx);
   }
 
-  auto x = nn::functional::concat(chunk_outputs, 1);
-
-  x = norm_(x);
-
-  return {x};
+  auto output = nn::functional::concat(chunk_outputs, 1);
+  return {norm_(output)};
 }
 
-Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, const std::filesystem::path& cache_dir)
-    : cfg(cfg) {
-  MLLM_INFO("Initializing intermittent version of qwen3")
+// ============================================================================
+// Qwen3IntermittentForCausalLM Implementation
+// ============================================================================
+
+Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(
+    const Qwen3Config& cfg, 
+    const std::filesystem::path& cache_dir)
+    : cfg_(cfg), state_path_(cache_dir / "generation_state.json") {
   
-  // 根据目录是否存在来选择初始化 kv_cache_ 的方式
-  std::filesystem::path metadata_path = cache_dir / "metadata.json";
-  
-  if (std::filesystem::exists(metadata_path)) {
-    // 目录存在，尝试恢复缓存
+  MLLM_INFO("Initializing intermittent Qwen3 model");
+  initializeCache(cache_dir);
+
+  // Initialize model components
+  eos_token_id_ = cfg_.end_of_text_token_id;
+  max_length_ = cfg_.max_cache_length;
+  tie_word_embeddings_ = cfg_.tie_word_embeddings;
+
+  llm_ = reg<Qwen3Text>("model", cfg_);
+
+  if (tie_word_embeddings_) {
+    lm_head_ = reg<nn::Linear>("lm_head_out", cfg_.hidden_size, cfg_.vocab_size, false, cfg_.linear_impl_type);
+  }
+
+  // Initialize RoPE inverse frequencies
+  registerBuffer("inv_freq", makeRoPEInvFreq(cfg_.head_dim, cfg_.rope_theta));
+}
+
+void Qwen3IntermittentForCausalLM::initializeCache(const std::filesystem::path& cache_dir) {
+  // Initialize or recover KV cache
+  if (std::filesystem::exists(cache_dir / "metadata.json")) {
     MLLM_INFO("Recovering PersistentCache from: {}", cache_dir.string());
-    auto recovered_cache = nn::PersistentCache::recover(cache_dir);
-    if (recovered_cache) {
-      kv_cache_ = recovered_cache;
-      MLLM_INFO("Successfully recovered PersistentCache");
-    } else {
+    kv_cache_ = nn::PersistentCache::recover(cache_dir);
+    if (!kv_cache_) {
       MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to recover cache from {}", cache_dir.string());
     }
   } else {
-    // 目录不存在，创建新的缓存
     MLLM_INFO("Creating new PersistentCache at: {}", cache_dir.string());
     kv_cache_ = std::make_shared<nn::PersistentCache>(
-        cache_dir,                      // working_dir
-        cfg.max_cache_length,           // max_cache_length
-        cfg.num_hidden_layers,          // layer_nums
-        cfg.num_attention_heads,        // q_heads
-        cfg.num_key_value_heads,        // kv_heads
-        cfg.head_dim,                   // kv_dims
-        kFloat32,                       // k_dtype
-        kFloat32,                       // v_dtype
-        kCPU                            // device_type
-    );
+        cache_dir, cfg_.max_cache_length, cfg_.num_hidden_layers,
+        cfg_.num_attention_heads, cfg_.num_key_value_heads, cfg_.head_dim,
+        kFloat32, kFloat32, kCPU);
+  }
+
+  // Load generation state
+  state_ = GenerationState::load(state_path_);
+  
+  const int kv_seq_cnt = kv_cache_->getCurrentSeqCnt(0);
+  if (hasPendingWork()) {
+    MLLM_INFO("Recovered with pending work. KV seq: {}, input: {}", 
+              kv_seq_cnt, state_.input_tokens.size());
+  } else if (kv_seq_cnt > 0) {
+    MLLM_INFO("Recovered cache. KV seq: {}", kv_seq_cnt);
+  }
+}
+
+Tensor Qwen3IntermittentForCausalLM::createPositionIds(int batch_size, int seq_len, int offset) {
+  auto pos_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
+  auto* ptr = pos_ids.ptr<int64_t>();
+  
+  for (int s = 0; s < seq_len; ++s) {
+    const int64_t pos = s + offset;
+    for (int b = 0; b < batch_size; ++b) {
+      ptr[b * seq_len + s] = pos;
+    }
+  }
+  return pos_ids;
+}
+
+Tensor Qwen3IntermittentForCausalLM::updatePositionIdsForDecode(
+    const Tensor& prev_position_ids, int batch_size) {
+  const int prev_len = prev_position_ids.shape()[1];
+  const int64_t next_pos = prev_position_ids.ptr<int64_t>()[prev_len - 1] + 1;
+  
+  auto new_pos = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
+  std::fill_n(new_pos.ptr<int64_t>(), batch_size, next_pos);
+  return new_pos;
+}
+
+ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(
+    const ARGenerationOutputPast& input, 
+    const ARGenerationArgs& args) {
+  
+  auto sequence = input.at("sequence");
+  const int batch_size = sequence.shape()[0];
+  const int input_len = sequence.shape()[1];
+  const bool is_prefill = !input.count("position_ids");
+  const int kv_seq_cnt = kv_cache_->getCurrentSeqCnt(0);
+
+  int resume_offset = 0;
+  if (is_prefill) {
+    resume_offset = state_.getResumeOffset(sequence, kv_seq_cnt);
+    
+    if (resume_offset < 0) {
+      // Input changed: clear and start fresh
+      MLLM_INFO("Input changed, clearing cache");
+      clearAllState();
+      resume_offset = 0;
+    }
+    
+    // Save input tokens for future resume
+    if (resume_offset == 0) {
+      const auto* ptr = sequence.ptr<int64_t>();
+      state_.input_tokens.assign(ptr, ptr + input_len);
+    }
+    
+    // Fully cached: run last token only to get logits
+    if (resume_offset >= input_len) {
+      MLLM_INFO("Input fully cached ({} tokens)", input_len);
+      kv_cache_->setCurrentSeqCnt(input_len - 1);
+      
+      auto last_token = sequence[{kAll, {input_len - 1, input_len}}];
+      auto position_ids = createPositionIds(batch_size, 1, input_len - 1);
+      auto [sin_emb, cos_emb] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
+      
+      sequence = llm_(last_token, sin_emb, cos_emb, AnyValue(kv_cache_.get()), AnyValue(input_len - 1))[0];
+      sequence = sequence[{kAll, {sequence.shape()[1] - 1}, kAll}];
+      
+      if (tie_word_embeddings_) sequence = lm_head_(sequence);
+      return {{"sequence", sequence}, {"position_ids", createPositionIds(batch_size, input_len, 0)}};
+    }
+    
+    // Partial resume: skip already-processed tokens
+    if (resume_offset > 0) {
+      MLLM_INFO("Resuming prefill from token {} of {}", resume_offset, input_len);
+      sequence = sequence[{kAll, {resume_offset, input_len}}];
+    }
+  }
+
+  // Generate position IDs
+  Tensor position_ids;
+  const int seq_len = sequence.shape()[1];
+  if (is_prefill) {
+    position_ids = createPositionIds(batch_size, seq_len, resume_offset);
+  } else {
+    position_ids = updatePositionIdsForDecode(input.at("position_ids"), batch_size);
+  }
+
+  // Forward through transformer
+  auto [sin_emb, cos_emb] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
+  sequence = llm_(sequence, sin_emb, cos_emb, AnyValue(kv_cache_.get()), AnyValue(kv_cache_->getCurrentSeqCnt(0)))[0];
+
+  // Extract last token's hidden states for LM head
+  sequence = sequence[{kAll, {sequence.shape()[1] - 1}, kAll}];
+  if (tie_word_embeddings_) sequence = lm_head_(sequence);
+
+  // Build output position IDs
+  Tensor output_position_ids = is_prefill 
+      ? createPositionIds(batch_size, input_len, 0) 
+      : position_ids;
+
+  return {{"sequence", sequence}, {"position_ids", output_position_ids}};
+}
+
+void Qwen3IntermittentForCausalLM::clearAllState() {
+  kv_cache_->clearCache();
+  state_.clear();
+  state_.save(state_path_);
+  (void)kv_cache_->sync();
+}
+
+void Qwen3IntermittentForCausalLM::saveAllStates() {
+  // Save generation state (input/output tokens)
+  state_.save(state_path_);
+  
+  // Sync KV cache to disk
+  if (!kv_cache_->sync()) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to sync KV cache to disk");
+  }
+}
+
+bool Qwen3IntermittentForCausalLM::hasPendingWork() const {
+  if (state_.input_tokens.empty()) return false;
+  const int kv_seq_cnt = kv_cache_->getCurrentSeqCnt(0);
+  return kv_seq_cnt > 0 && kv_seq_cnt < static_cast<int>(state_.input_tokens.size());
+}
+
+void Qwen3IntermittentForCausalLM::streamGenerate(
+    const ARGenerationOutputPast& input,
+    const ARGenerationArgs& args,
+    const std::function<void(int64_t)>& callback) {
+  
+  auto sequence = input.at("sequence");
+  const int input_len = sequence.shape()[1];
+  const int max_length = args.count("max_length") ? args.at("max_length").get<int>() : max_length_;
+  const int eos_token_id = args.count("eos_token_id") ? args.at("eos_token_id").get<int>() : eos_token_id_;
+  const int kv_seq_cnt = kv_cache_->getCurrentSeqCnt(0);
+  
+  // Check resume possibility
+  const int resume_offset = state_.getResumeOffset(sequence, kv_seq_cnt);
+  const bool can_resume = (resume_offset >= 0);
+
+  // Decode interrupted: replay cached outputs then continue
+  if (can_resume && kv_seq_cnt >= input_len && !state_.output_tokens.empty()) {
+    MLLM_INFO("Resuming decode: replaying {} cached tokens", state_.output_tokens.size());
+    
+    for (int64_t token : state_.output_tokens) {
+      callback(token);
+    }
+    
+    // If last token was EOS, we're done
+    if (state_.output_tokens.back() == eos_token_id) {
+      return;
+    }
+    
+    // Continue from last output token
+    ARGenerationOutputPast past;
+    past["sequence"] = Tensor::empty({1, 1}, kInt64, kCPU).alloc();
+    past["sequence"].at<mllm_int64_t>({0, 0}) = state_.output_tokens.back();
+    past["position_ids"] = createPositionIds(1, kv_seq_cnt, 0);
+    
+    for (int i = static_cast<int>(state_.output_tokens.size()); i < max_length; ++i) {
+      ARGenerationOutputPast output = forward(past, args);
+      Tensor logits = output["sequence"];
+      int64_t next_token_id = sampleGreedy(logits);
+      
+      state_.output_tokens.push_back(next_token_id);
+      callback(next_token_id);
+      
+      // Save state after each token to enable resume on interruption
+      state_.save(state_path_);
+      
+      if (next_token_id == eos_token_id) break;
+      
+      past = output;
+      past["sequence"] = Tensor::empty({1, 1}, kInt64, logits.device()).alloc();
+      past["sequence"].at<mllm_int64_t>({0, 0}) = next_token_id;
+    }
+    
+    // Final sync of KV cache
+    (void)kv_cache_->sync();
+    return;
   }
   
-  eos_token_id_ = cfg.end_of_text_token_id;
-  max_length_ = cfg.max_cache_length;
-  tie_word_embeddings_ = cfg.tie_word_embeddings;
-
-  llm = reg<Qwen3Text>("model", cfg);
-
-  if (cfg.tie_word_embeddings) {
-    // NOTE:
-    // model.lm_head.weight is quantization weights of model.embed_tokens.weight
-    lm_head_ = reg<nn::Linear>("lm_head_out", cfg.hidden_size, cfg.vocab_size, false, cfg.linear_impl_type);
+  // Fresh start or input changed: clear output tokens
+  if (!can_resume) {
+    clearAllState();
+  }
+  state_.output_tokens.clear();
+  
+  // Normal generation flow (prefill resume handled by forward())
+  ARGenerationOutputPast past = input;
+  for (int i = 0; i < max_length; ++i) {
+    ARGenerationOutputPast output = forward(past, args);
+    Tensor logits = output["sequence"];
+    int64_t next_token_id = sampleGreedy(logits);
+    
+    state_.output_tokens.push_back(next_token_id);
+    callback(next_token_id);
+    
+    // Save state after each token to enable resume on interruption
+    state_.save(state_path_);
+    
+    if (next_token_id == eos_token_id) break;
+    
+    past = output;
+    past["sequence"] = Tensor::empty({1, 1}, kInt64, logits.device()).alloc();
+    past["sequence"].at<mllm_int64_t>({0, 0}) = next_token_id;
   }
 
-  // Init inv freq
-  auto inv = makeRoPEInvFreq(cfg.head_dim, cfg.rope_theta);
-  registerBuffer("inv_freq", inv);
+  // Final sync of KV cache
+  (void)kv_cache_->sync();
 }
-
-ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) {
-  // ========== 1. 获取输入序列 ==========
-  // 从输入字典中获取 token 序列
-  // sequence 形状: [B, S]，其中每个元素是 token ID
-  auto sequence = input.at("sequence");
-
-  // ========== 2. 获取批次和序列维度信息 ==========
-  // 提取批次大小和序列长度，用于后续的位置编码生成
-  auto batch_size = sequence.shape()[0];
-  auto seq_len = sequence.shape()[1];
-
-  // ========== 3. 生成位置编码 (Position IDs) ==========
-  // 根据是预填充阶段还是解码阶段，生成或更新位置编码
-  Tensor position_ids = Tensor::nil();
-  if (input.count("position_ids")) {
-    // ========== 3.1 解码阶段 ==========
-    // 如果输入中已有 position_ids，说明是增量解码阶段
-    // 需要基于之前的位置继续递增
-    position_ids = input.at("position_ids");
-
-    // 对于单 token 解码（seq_len == 1），将最后一个位置加 1
-    if (seq_len == 1) {
-      auto last_pos = *position_ids.offsettedPtr<int64_t>({0, position_ids.shape()[1] - 1});
-      position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
-      *position_ids.offsettedPtr<int64_t>({0, 0}) = last_pos + 1;
-    }
-  } else {
-    // ========== 3.2 预填充阶段 ==========
-    // 如果是首次输入（预填充阶段），生成从 0 开始的位置编码
-    // 位置编码: [0, 1, 2, ..., seq_len-1]
-    position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
-    auto position_ids_ptr = position_ids.ptr<int64_t>();
-    for (int b = 0; b < batch_size; ++b) {
-      for (int s = 0; s < seq_len; ++s) { position_ids_ptr[b * seq_len + s] = s; }
-    }
-  }
-
-  // ========== 4. 生成 RoPE 位置编码 ==========
-  // 基于位置编码和预计算的逆频率，生成旋转位置编码的正弦和余弦值
-  // 这些值将用于在注意力计算中注入位置信息
-  // 输出形状: [B, S, head_dim] (sin 和 cos 各一个)
-  auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
-
-  // ========== 5. 通过 Transformer 模型前向传播 ==========
-  // 将 token 序列、RoPE 编码和 KV cache 传入模型
-  // 同时传递 token_counter 用于记录每层完成时间
-  // 模型会依次通过：嵌入层 -> 多个解码器层 -> 最终归一化
-  // 输出形状: [B, S, hidden_size]
-  sequence = llm(sequence, llm_embedding_sin, llm_embedding_cos, 
-                 AnyValue(kv_cache_.get()), AnyValue(token_counter_))[0];
-  token_counter_ += seq_len;
-
-  // ========== 6. 提取最后一个 token 的表示 ==========
-  // 对于自回归生成，通常只需要最后一个位置的隐藏状态
-  // 这样可以减少计算量，因为后续的 LM head 只需要预测下一个 token
-  // 输出形状: [B, 1, hidden_size]
-  {
-    auto S = sequence.shape()[1];
-    sequence = sequence[{kAll, {S - 1}, kAll}];
-  }
-
-  // ========== 7. 语言模型头投影 ==========
-  // 如果启用了词嵌入共享（tie_word_embeddings），将隐藏状态投影到词汇表大小
-  // 输出形状: [B, 1, vocab_size]
-  // 注意：如果未启用共享，则需要在外部调用 lm_head
-  if (tie_word_embeddings_) { sequence = lm_head_(sequence); }
-
-  // ========== 8. 返回输出 ==========
-  // 返回更新后的序列表示和位置编码，供下一轮生成使用
-  return {
-      {"sequence", sequence},
-      {"position_ids", position_ids},
-  };
-}
-
-nn::PersistentCache& Qwen3IntermittentForCausalLM::kvCache() { return *kv_cache_; }
 
 }  // namespace mllm::models::qwen3_i
-
