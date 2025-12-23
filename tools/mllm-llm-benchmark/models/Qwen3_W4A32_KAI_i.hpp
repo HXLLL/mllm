@@ -48,6 +48,7 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
     }
     
     mllm::print("========== Model Information ==========");
+    mllm::print("Intermittent Mode  : Enabled");
     mllm::print("Model Type         : Qwen3 W4A32 KAI");
     mllm::print("Hidden Size        :", config_->hidden_size);
     mllm::print("Num Layers         :", config_->num_hidden_layers);

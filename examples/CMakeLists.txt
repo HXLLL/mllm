@@ -17,4 +17,3 @@ add_subdirectory(qwen3_service)
 #
 add_subdirectory(zenfs)
 add_subdirectory(persistent_cache)
-add_subdirectory(bench_i)
