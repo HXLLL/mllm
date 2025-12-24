@@ -552,8 +552,6 @@ void Qwen3IntermittentForCausalLM::streamGenerate(
 
   // Decode interrupted: replay cached outputs then continue
   if (can_resume && kv_seq_cnt >= input_len && !state_.output_tokens.empty()) {
-    MLLM_INFO("Resuming decode: replaying {} cached tokens", state_.output_tokens.size());
-    
     for (int64_t token : state_.output_tokens) {
       callback(token);
     }
