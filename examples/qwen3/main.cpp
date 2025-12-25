@@ -15,7 +15,7 @@ class Qwen3Service {
   Qwen3Service(const std::string& model_path, const std::string& tokenizer_path, const std::string& config_path,
                const std::string& cache_dir, mllm::ModelFileVersion file_version)
       : qwen3_cfg_(config_path), qwen3_tokenizer_(tokenizer_path), cache_path_(cache_dir), qwen3_(qwen3_cfg_, cache_path_) {
-    auto param = mllm::load(model_path, file_version);
+    auto param = mllm::load(model_path, file_version, mllm::kCPU, false);
     qwen3_.load(param);
   }
 
