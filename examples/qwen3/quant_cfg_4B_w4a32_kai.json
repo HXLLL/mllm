@@ -90,7 +90,7 @@
             "replace": true
         }
     },
-    "lm_head.weight": {
+    "model.embed_tokens.weight": {
         "hints": {
             "quant_method": "kai",
             "kai_matmul_triplet": "f32_qai8dxp_qsi4c32p",
