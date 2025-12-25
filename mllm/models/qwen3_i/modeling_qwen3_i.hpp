@@ -6,7 +6,7 @@
 #include "mllm/mllm.hpp"
 #include "mllm/nn/Module.hpp"
 #include "mllm/nn/Nn.hpp"
-#include "mllm/nn/lmcache/PersistentCache.hpp"
+#include "mllm/models/qwen3_i/generation_state.hpp"
 #include "mllm/models/qwen3/configuration_qwen3.hpp"
 #include "mllm/models/ARGeneration.hpp"
 
@@ -83,88 +83,26 @@ class Qwen3Text final : public nn::Module {
   int chunksize_ = 1;
 };
 
-// ============================================================================
-// Generation State (for resumable generation)
-// ============================================================================
-
-/**
- * @brief Manages input/output token state for resumable generation.
- * 
- * This struct is separate from PersistentCache to maintain clean separation:
- * - PersistentCache: KV cache storage only
- * - GenerationState: token tracking and resume logic
- */
-struct GenerationState {
-  std::vector<int64_t> input_tokens;
-  std::vector<int64_t> output_tokens;
-
-  void save(const std::filesystem::path& path) const;
-  static GenerationState load(const std::filesystem::path& path);
-  void clear() { input_tokens.clear(); output_tokens.clear(); }
-
-  /**
-   * @brief Determine resume offset based on input and KV cache state.
-   * @param input The input tensor to check against cached input_tokens
-   * @param kv_seq_cnt Current sequence count in KV cache
-   * @return -1 if input doesn't match (need fresh start), otherwise the resume offset
-   */
-  [[nodiscard]] int getResumeOffset(const Tensor& input, int kv_seq_cnt) const;
-};
-
-// ============================================================================
-// Intermittent (Resumable) Causal LM
-// ============================================================================
-
-/**
- * @brief Qwen3 model with support for interruption and resumption.
- *
- * This model uses PersistentCache to save KV cache and generation state to disk.
- * If the process is interrupted during prefill, the next run can resume from
- * where it left off instead of recomputing from the beginning.
- *
- * Key features:
- * - Automatic state persistence via mmap-backed KV cache
- * - Resume detection based on matching input tokens
- * - Clean state reset for new generation sessions
- */
 class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {
  public:
-  explicit Qwen3IntermittentForCausalLM(
-      const Qwen3Config& cfg, const std::filesystem::path& cache_dir = std::filesystem::path("./data/qwen3_i_kvcache"));
+  explicit Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, const std::filesystem::path& state_dir);
 
-  // ARGeneration interface
   ARGenerationOutputPast forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) override;
   void streamGenerate(const ARGenerationOutputPast& input, const ARGenerationArgs& args,
                       const std::function<void(int64_t)>& callback) override;
 
-  // Cache access
-  nn::PersistentCache& kvCache() { return *kv_cache_; }
-
-  // State management
-  void clearAllState();
-  void saveAllStates();
-  [[nodiscard]] bool hasPendingWork() const;
-  [[nodiscard]] int getProcessedTokens() const { return kv_cache_->getCurrentSeqCnt(0); }
-  [[nodiscard]] const GenerationState& state() const { return state_; }
-
-  // Configuration
+  void sync_state();
   void setChunkSize(int chunksize) { llm_.setChunkSize(chunksize); }
 
  private:
-  // Initialization
-  void initializeCache(const std::filesystem::path& cache_dir);
-
-  // Position encoding
   static Tensor createPositionIds(int batch_size, int seq_len, int offset = 0);
   static Tensor updatePositionIdsForDecode(const Tensor& prev_position_ids, int batch_size);
 
-  // Member variables
   const Qwen3Config& cfg_;
   Qwen3Text llm_;
   nn::Linear lm_head_;
-  std::shared_ptr<nn::PersistentCache> kv_cache_;
-  GenerationState state_;
-  std::filesystem::path state_path_;
+  GenerationState::ptr state_;
+
   bool tie_word_embeddings_ = false;
 };
 

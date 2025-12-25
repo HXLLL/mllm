@@ -8,14 +8,11 @@
 #include "mllm/utils/Enumerate.hpp"
 #include <algorithm>
 #include <cmath>
-#include <fstream>
 #include <nlohmann/json.hpp>
 
 namespace mllm::models::qwen3_i {
 
-// ============================================================================
-// RoPE Utilities
-// ============================================================================
+/** RoPE utilities **/
 
 static Tensor makeRoPEInvFreq(int output_dim, float rope_theta) {
   auto inv_freq = Tensor::empty({output_dim / 2}, kFloat32, kCPU).alloc();
@@ -67,54 +64,7 @@ static std::pair<Tensor, Tensor> makeRotaryPosEmbedding(
   return {sin_emb, cos_emb};
 }
 
-// ============================================================================
-// GenerationState Implementation
-// ============================================================================
-
-void GenerationState::save(const std::filesystem::path& path) const {
-  nlohmann::json j;
-  if (!input_tokens.empty()) j["input_tokens"] = input_tokens;
-  if (!output_tokens.empty()) j["output_tokens"] = output_tokens;
-  
-  std::ofstream file(path);
-  if (file) file << j.dump(2);
-}
-
-GenerationState GenerationState::load(const std::filesystem::path& path) {
-  GenerationState state;
-  std::ifstream file(path);
-  if (!file) return state;
-  
-  try {
-    nlohmann::json j;
-    file >> j;
-    if (j.contains("input_tokens")) state.input_tokens = j["input_tokens"].get<std::vector<int64_t>>();
-    if (j.contains("output_tokens")) state.output_tokens = j["output_tokens"].get<std::vector<int64_t>>();
-  } catch (...) {
-    // Return empty state on parse error
-  }
-  return state;
-}
-
-int GenerationState::getResumeOffset(const Tensor& input, int kv_seq_cnt) const {
-  const int input_len = input.shape()[1];
-  
-  // No cached input: fresh start
-  if (input_tokens.empty()) return -1;
-  
-  // Check if input matches cached
-  if (static_cast<int>(input_tokens.size()) != input_len) return -1;
-  
-  const auto* ptr = input.ptr<int64_t>();
-  if (!std::equal(ptr, ptr + input_len, input_tokens.begin())) return -1;
-  
-  // Input matches: return KV cache progress (clamped to input length)
-  return std::min(kv_seq_cnt, input_len);
-}
-
-// ============================================================================
-// Qwen3MLP Implementation
-// ============================================================================
+/** Qwen3MLP Implementation **/
 
 Qwen3MLP::Qwen3MLP(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
   gate_proj_ = reg<nn::Linear>("gate_proj", cfg.hidden_size, cfg.intermediate_size, false, cfg.linear_impl_type);
@@ -129,9 +79,7 @@ std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const s
   return {down_proj_(x)};
 }
 
-// ============================================================================
-// Qwen3Attention Implementation
-// ============================================================================
+/** Qwen3Attention Implementation **/
 
 Qwen3Attention::Qwen3Attention(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
   hidden_size_ = cfg.hidden_size;
@@ -182,6 +130,7 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   query = q_rope_(query, sin_emb, cos_emb);
   key = k_rope_(key, sin_emb, cos_emb);
 
+  // TODO: consider task split point
   // Update KV cache
   auto [cached_key, cached_value] = kv_cache->updateKVCache(layer_idx_, key, value);
   Context::instance().tracer()->record<KVCacheCompleteEvent>(layer_idx_, S, 0);
@@ -199,9 +148,7 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   return {o_proj_(output)};
 }
 
-// ============================================================================
-// Qwen3Decoder Implementation
-// ============================================================================
+/** Qwen3Decoder Implementation **/
 
 Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
   self_attn_ = reg<Qwen3Attention>("self_attn", cfg);
@@ -230,9 +177,7 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   return {mlp_output + residual};
 }
 
-// ============================================================================
-// Qwen3Text Implementation
-// ============================================================================
+/** Qwen3Text Implementation **/
 
 Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
   decode_blocks_ = reg<nn::ModuleList<Qwen3Decoder>>("layers", cfg.num_hidden_layers, cfg);
@@ -256,6 +201,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   std::vector<Tensor> chunk_outputs;
   chunk_outputs.reserve(num_chunks);
 
+  // Chunked prefill
   for (int chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
     const int chunk_start = chunk_idx * chunksize_;
     const int chunk_end = std::min(chunk_start + chunksize_, seq_len);
@@ -292,13 +238,10 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 // Qwen3IntermittentForCausalLM Implementation
 // ============================================================================
 
-Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(
-    const Qwen3Config& cfg, 
-    const std::filesystem::path& cache_dir)
-    : cfg_(cfg), state_path_(cache_dir / "generation_state.json") {
-  
+Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, const std::filesystem::path& state_dir)
+    : cfg_(cfg) {
   MLLM_INFO("Initializing intermittent Qwen3 model");
-  initializeCache(cache_dir);
+  state_ = GenerationState::create_or_recover(state_dir);
 
   // Initialize model components
   eos_token_id_ = cfg_.end_of_text_token_id;
@@ -313,34 +256,6 @@ Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(
 
   // Initialize RoPE inverse frequencies
   registerBuffer("inv_freq", makeRoPEInvFreq(cfg_.head_dim, cfg_.rope_theta));
-}
-
-void Qwen3IntermittentForCausalLM::initializeCache(const std::filesystem::path& cache_dir) {
-  // Initialize or recover KV cache
-  if (std::filesystem::exists(cache_dir / "metadata.json")) {
-    MLLM_INFO("Recovering PersistentCache from: {}", cache_dir.string());
-    kv_cache_ = nn::PersistentCache::recover(cache_dir);
-    if (!kv_cache_) {
-      MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to recover cache from {}", cache_dir.string());
-    }
-  } else {
-    MLLM_INFO("Creating new PersistentCache at: {}", cache_dir.string());
-    kv_cache_ = std::make_shared<nn::PersistentCache>(
-        cache_dir, cfg_.max_cache_length, cfg_.num_hidden_layers,
-        cfg_.num_attention_heads, cfg_.num_key_value_heads, cfg_.head_dim,
-        kFloat32, kFloat32, kCPU);
-  }
-
-  // Load generation state
-  state_ = GenerationState::load(state_path_);
-  
-  const int kv_seq_cnt = kv_cache_->getCurrentSeqCnt(0);
-  if (hasPendingWork()) {
-    MLLM_INFO("Recovered with pending work. KV seq: {}, input: {}", 
-              kv_seq_cnt, state_.input_tokens.size());
-  } else if (kv_seq_cnt > 0) {
-    MLLM_INFO("Recovered cache. KV seq: {}", kv_seq_cnt);
-  }
 }
 
 Tensor Qwen3IntermittentForCausalLM::createPositionIds(int batch_size, int seq_len, int offset) {
@@ -369,184 +284,73 @@ Tensor Qwen3IntermittentForCausalLM::updatePositionIdsForDecode(
 ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(
     const ARGenerationOutputPast& input, 
     const ARGenerationArgs& args) {
-  
+
   auto sequence = input.at("sequence");
-  const int batch_size = sequence.shape()[0];
-  const int input_len = sequence.shape()[1];
-  const bool is_prefill = !input.count("position_ids");
-  const int kv_seq_cnt = kv_cache_->getCurrentSeqCnt(0);
 
-  int resume_offset = 0;
-  if (is_prefill) {
-    resume_offset = state_.getResumeOffset(sequence, kv_seq_cnt);
-    
-    if (resume_offset < 0) {
-      // Input changed: clear and start fresh
-      MLLM_INFO("Input changed, clearing cache");
-      clearAllState();
-      resume_offset = 0;
-    }
-    
-    // Save input tokens for future resume
-    if (resume_offset == 0) {
-      const auto* ptr = sequence.ptr<int64_t>();
-      state_.input_tokens.assign(ptr, ptr + input_len);
-    }
-    
-    // Fully cached: run last token only to get logits
-    if (resume_offset >= input_len) {
-      MLLM_INFO("Input fully cached ({} tokens)", input_len);
-      kv_cache_->setCurrentSeqCnt(input_len - 1);
-      
-      auto last_token = sequence[{kAll, {input_len - 1, input_len}}];
-      auto position_ids = createPositionIds(batch_size, 1, input_len - 1);
-      auto [sin_emb, cos_emb] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
-      
-      sequence = llm_(last_token, sin_emb, cos_emb, AnyValue(kv_cache_.get()), AnyValue(input_len - 1))[0];
-      sequence = sequence[{kAll, {sequence.shape()[1] - 1}, kAll}];
-      
-      if (tie_word_embeddings_) sequence = lm_head_(sequence);
-      return {{"sequence", sequence}, {"position_ids", createPositionIds(batch_size, input_len, 0)}};
-    }
-    
-    // Partial resume: skip already-processed tokens
-    if (resume_offset > 0) {
-      MLLM_INFO("Resuming prefill from token {} of {}", resume_offset, input_len);
-      sequence = sequence[{kAll, {resume_offset, input_len}}];
-    }
-  }
+  auto batch_size = sequence.shape()[0];
+  assert(batch_size == 1);
+  auto seq_len = sequence.shape()[1];
 
-  // Generate position IDs
-  Tensor position_ids;
-  const int seq_len = sequence.shape()[1];
-  if (is_prefill) {
-    position_ids = createPositionIds(batch_size, seq_len, resume_offset);
+  // ========== 3. 生成位置编码 (Position IDs) ==========
+  // 根据是预填充阶段还是解码阶段，生成或更新位置编码
+  Tensor position_ids = Tensor::nil();
+  if (input.count("position_ids")) {
+    // ========== 3.1 解码阶段 ==========
+    // 如果输入中已有 position_ids，说明是增量解码阶段
+    // 需要基于之前的位置继续递增
+    position_ids = input.at("position_ids");
+
+    // 对于单 token 解码（seq_len == 1），将最后一个位置加 1
+    if (seq_len == 1) {
+      auto last_pos = *position_ids.offsettedPtr<int64_t>({0, position_ids.shape()[1] - 1});
+      position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
+      *position_ids.offsettedPtr<int64_t>({0, 0}) = last_pos + 1;
+    }
   } else {
-    position_ids = updatePositionIdsForDecode(input.at("position_ids"), batch_size);
-  }
-
-  // Forward through transformer
-  auto [sin_emb, cos_emb] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
-  sequence = llm_(sequence, sin_emb, cos_emb, AnyValue(kv_cache_.get()), AnyValue(kv_cache_->getCurrentSeqCnt(0)))[0];
-
-  // Extract last token's hidden states for LM head
-  sequence = sequence[{kAll, {sequence.shape()[1] - 1}, kAll}];
-  if (tie_word_embeddings_) sequence = lm_head_(sequence);
-
-  // Build output position IDs
-  Tensor output_position_ids = is_prefill 
-      ? createPositionIds(batch_size, input_len, 0) 
-      : position_ids;
-
-  return {{"sequence", sequence}, {"position_ids", output_position_ids}};
-}
-
-void Qwen3IntermittentForCausalLM::clearAllState() {
-  kv_cache_->clearCache();
-  state_.clear();
-  state_.save(state_path_);
-  (void)kv_cache_->sync();
-}
-
-void Qwen3IntermittentForCausalLM::saveAllStates() {
-  // Save generation state (input/output tokens)
-  state_.save(state_path_);
-  
-  // Sync KV cache to disk
-  if (!kv_cache_->sync()) {
-    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to sync KV cache to disk");
-  }
-}
-
-bool Qwen3IntermittentForCausalLM::hasPendingWork() const {
-  if (state_.input_tokens.empty()) return false;
-  const int kv_seq_cnt = kv_cache_->getCurrentSeqCnt(0);
-  return kv_seq_cnt > 0 && kv_seq_cnt < static_cast<int>(state_.input_tokens.size());
-}
-
-void Qwen3IntermittentForCausalLM::streamGenerate(
-    const ARGenerationOutputPast& input,
-    const ARGenerationArgs& args,
-    const std::function<void(int64_t)>& callback) {
-  
-  auto sequence = input.at("sequence");
-  const int input_len = sequence.shape()[1];
-  const int max_length = args.count("max_length") ? args.at("max_length").get<int>() : max_length_;
-  const int eos_token_id = args.count("eos_token_id") ? args.at("eos_token_id").get<int>() : eos_token_id_;
-  const int kv_seq_cnt = kv_cache_->getCurrentSeqCnt(0);
-  
-  // Check resume possibility
-  const int resume_offset = state_.getResumeOffset(sequence, kv_seq_cnt);
-  const bool can_resume = (resume_offset >= 0);
-
-  // Decode interrupted: replay cached outputs then continue
-  if (can_resume && kv_seq_cnt >= input_len && !state_.output_tokens.empty()) {
-    for (int64_t token : state_.output_tokens) {
-      callback(token);
+    // ========== 3.2 预填充阶段 ==========
+    // 如果是首次输入（预填充阶段），生成从 0 开始的位置编码
+    // 位置编码: [0, 1, 2, ..., seq_len-1]
+    position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
+    auto position_ids_ptr = position_ids.ptr<int64_t>();
+    for (int b = 0; b < batch_size; ++b) {
+      for (int s = 0; s < seq_len; ++s) { position_ids_ptr[b * seq_len + s] = s; }
     }
-    
-    // If last token was EOS, we're done
-    if (state_.output_tokens.back() == eos_token_id) {
-      return;
-    }
-    
-    // Continue from last output token
-    ARGenerationOutputPast past;
-    past["sequence"] = Tensor::empty({1, 1}, kInt64, kCPU).alloc();
-    past["sequence"].at<mllm_int64_t>({0, 0}) = state_.output_tokens.back();
-    past["position_ids"] = createPositionIds(1, kv_seq_cnt, 0);
-    
-    for (int i = static_cast<int>(state_.output_tokens.size()); i < max_length; ++i) {
-      ARGenerationOutputPast output = forward(past, args);
-      Tensor logits = output["sequence"];
-      int64_t next_token_id = sampleGreedy(logits);
-      
-      state_.output_tokens.push_back(next_token_id);
-      callback(next_token_id);
-      
-      // Save state after each token to enable resume on interruption
-      state_.save(state_path_);
-      
-      if (next_token_id == eos_token_id) break;
-      
-      past = output;
-      past["sequence"] = Tensor::empty({1, 1}, kInt64, logits.device()).alloc();
-      past["sequence"].at<mllm_int64_t>({0, 0}) = next_token_id;
-    }
-    
-    // Final sync of KV cache
-    (void)kv_cache_->sync();
-    return;
-  }
-  
-  // Fresh start or input changed: clear output tokens
-  if (!can_resume) {
-    clearAllState();
-  }
-  state_.output_tokens.clear();
-  
-  // Normal generation flow (prefill resume handled by forward())
-  ARGenerationOutputPast past = input;
-  for (int i = 0; i < max_length; ++i) {
-    ARGenerationOutputPast output = forward(past, args);
-    Tensor logits = output["sequence"];
-    int64_t next_token_id = sampleGreedy(logits);
-    
-    state_.output_tokens.push_back(next_token_id);
-    callback(next_token_id);
-    
-    // Save state after each token to enable resume on interruption
-    state_.save(state_path_);
-    
-    if (next_token_id == eos_token_id) break;
-    
-    past = output;
-    past["sequence"] = Tensor::empty({1, 1}, kInt64, logits.device()).alloc();
-    past["sequence"].at<mllm_int64_t>({0, 0}) = next_token_id;
   }
 
-  // Final sync of KV cache
-  (void)kv_cache_->sync();
+  // ========== 4. 生成 RoPE 位置编码 ==========
+  // 基于位置编码和预计算的逆频率，生成旋转位置编码的正弦和余弦值
+  // 这些值将用于在注意力计算中注入位置信息
+  // 输出形状: [B, S, head_dim] (sin 和 cos 各一个)
+  auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
+
+  // ========== 5. 通过 Transformer 模型前向传播 ==========
+  // 将 token 序列、RoPE 编码和 KV cache 传入模型
+  // 同时传递 token_counter 用于记录每层完成时间
+  // 模型会依次通过：嵌入层 -> 多个解码器层 -> 最终归一化
+  // 输出形状: [B, S, hidden_size]
+  sequence = llm_(sequence, llm_embedding_sin, llm_embedding_cos, AnyValue(state_), AnyValue(position_ids))[0];
+
+  // ========== 6. 提取最后一个 token 的表示 ==========
+  // 对于自回归生成，通常只需要最后一个位置的隐藏状态
+  // 这样可以减少计算量，因为后续的 LM head 只需要预测下一个 token
+  // 输出形状: [B, 1, hidden_size]
+  {
+    auto S = sequence.shape()[1];
+    sequence = sequence[{kAll, {S - 1}, kAll}];
+  }
+
+  // ========== 7. 语言模型头投影 ==========
+  // 如果启用了词嵌入共享（tie_word_embeddings），将隐藏状态投影到词汇表大小
+  // 输出形状: [B, 1, vocab_size]
+  // 注意：如果未启用共享，则需要在外部调用 lm_head
+  if (tie_word_embeddings_) { sequence = lm_head_(sequence); }
+
+  // ========== 8. 返回输出 ==========
+  // 返回更新后的序列表示和位置编码，供下一轮生成使用
+  return {
+      {"sequence", sequence},
+      {"position_ids", position_ids},
+  };
 }
 
 }  // namespace mllm::models::qwen3_i
