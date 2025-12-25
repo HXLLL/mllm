@@ -9,10 +9,15 @@ namespace mllm::models::qwen3_i {
 
 class GenerationState {
  public:
+  using ptr = std::shared_ptr<GenerationState>;
+
   GenerationState();
 
+  static ptr create_or_recover(const std::filesystem::path& path);
+  static ptr recover(const std::filesystem::path& path);
+  static ptr create(const std::filesystem::path& path);
+
   void save(const std::filesystem::path& path) const;
-  static GenerationState load(const std::filesystem::path& path);
 
   void sync_cache();
   void update_kv(int layer_idx, int token_idx, const Tensor &k, const Tensor &v);
