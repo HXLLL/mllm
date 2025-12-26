@@ -1,0 +1,26 @@
+# Copyright (c) MLLM Team.
+# Licensed under the MIT License.
+
+Tasks:
+  - CMakeConfigTask:
+      cmake_cfg_path: "build"
+      cmake_toolchain_file: "$HOME/l4t-gcc/share/buildroot/toolchainfile.cmake"
+      cmake_build_type: "RelWithDebInfo" 
+      cmake_extra_args:
+        - "-DMLLM_BUILD_ARM_BACKEND=ON"
+        - '-DMLLM_CPU_BACKEND_COMPILE_OPTIONS="-march=armv8.2-a+fp16+fp16fml+dotprod+i8mm;-ffast-math;-Wno-nan-infinity-disabled"'
+        - "-DMLLM_KERNEL_USE_THREADS=ON"
+        - "-DMLLM_KERNEL_THREADS_VENDOR_OPENMP=ON"
+        - "-DMLLM_KERNEL_USE_THREADS_VENDOR_MLLM=OFF"
+        - "-DMLLM_ENABLE_EXAMPLE=ON"
+        - "-DMLLM_ENABLE_BENCHMARK=ON"
+        - "-DMLLM_ENABLE_TEST=ON"
+        - "-DMLLM_ENABLE_TOOLS=ON"
+        - "-DHAVE_STD_REGEX=0"
+        - "-DHAVE_POSIX_REGEX=0"
+        - "-DHAVE_STEADY_CLOCK=0"
+        - "-DHAVE_PTHREAD_AFFINITY=0"
+  - CMakeBuildTask:
+      cmake_cfg_path: "build"
+      targets: [ "mllm-llm-benchmark", "mllm-persistent-cache" ]
+
