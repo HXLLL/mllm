@@ -2,11 +2,11 @@
 #include <filesystem>
 #include <fmt/core.h>
 #include <mllm/mllm.hpp>
-#include <mllm/models/qwen3_i/modeling_qwen3_i.hpp>
+#include <mllm/models/qwen3/modeling_qwen3.hpp>
 #include <mllm/models/qwen3/tokenization_qwen3.hpp>
 #include <mllm/utils/AnyValue.hpp>
 
-using Model = mllm::models::qwen3_i::Qwen3IntermittentForCausalLM;
+using Model = mllm::models::qwen3::Qwen3ForCausalLM;
 
 using mllm::Argparse;
 
@@ -14,7 +14,7 @@ class Qwen3Service {
  public:
   Qwen3Service(const std::string& model_path, const std::string& tokenizer_path, const std::string& config_path,
                const std::string& cache_dir, mllm::ModelFileVersion file_version)
-      : qwen3_cfg_(config_path), qwen3_tokenizer_(tokenizer_path), cache_path_(cache_dir), qwen3_(qwen3_cfg_, cache_path_) {
+      : qwen3_cfg_(config_path), qwen3_tokenizer_(tokenizer_path), qwen3_(qwen3_cfg_) {
     auto param = mllm::load(model_path, file_version, mllm::kCPU, false);
     qwen3_.load(param);
   }
@@ -26,36 +26,36 @@ class Qwen3Service {
     std::string prompt_text;
     mllm::models::ARGenerationOutputPast inputs;
 
-    const auto& cached_state = qwen3_.state();
-    const bool has_archive = std::filesystem::exists(cache_path_ / "metadata.json")
-                             && std::filesystem::exists(cache_path_ / "generation_state.json")
-                             && !cached_state.input_tokens.empty();
+    // const auto& cached_state = qwen3_.state();
+    // const bool has_archive = std::filesystem::exists(cache_path_ / "metadata.json")
+    //                          && std::filesystem::exists(cache_path_ / "generation_state.json")
+    //                          && !cached_state.input_tokens.empty();
 
     try {
-      if (has_archive) {
-        fmt::print("🔁 Archive detected at: {}\n", cache_path_.string());
-        fmt::print("📤 Replaying cached tokens...\n");
+      // if (has_archive) {
+      //   fmt::print("🔁 Archive detected at: {}\n", cache_path_.string());
+      //   fmt::print("📤 Replaying cached tokens...\n");
 
-        inputs["sequence"] = buildSequenceFromIds(cached_state.input_tokens);
-        replayTokens(cached_state.input_tokens);
-        replayTokens(cached_state.output_tokens);
-      } else {
+      //   inputs["sequence"] = buildSequenceFromIds(cached_state.input_tokens);
+      //   replayTokens(cached_state.input_tokens);
+      //   replayTokens(cached_state.output_tokens);
+      // } else {
         fmt::print("💬 Prompt text (or 'exit/quit'): ");
         std::getline(std::cin, prompt_text);
 
         fmt::print("🔄 Processing...\n");
         inputs = qwen3_tokenizer_.convertMessage({.prompt = prompt_text});
         fmt::print("\n🤖 Response: ");
-      }
+      // }
 
-      size_t skipped_cached_outputs = has_archive ? cached_state.output_tokens.size() : 0;
+      // size_t skipped_cached_outputs = has_archive ? cached_state.output_tokens.size() : 0;
       size_t seen_cached = 0;
 
       qwen3_.streamGenerate(inputs, {}, [&](int64_t token_id) {
-        if (seen_cached < skipped_cached_outputs) {
-          ++seen_cached;
-          return;
-        }
+        // if (seen_cached < skipped_cached_outputs) {
+        //   ++seen_cached;
+        //   return;
+        // }
         std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush;
       });
 
