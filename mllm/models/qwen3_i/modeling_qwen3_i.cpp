@@ -107,7 +107,11 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   const auto& x = inputs[0];
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
+  const auto& position_ids = inputs[3];
   auto state = args[0].get<GenerationState::ptr>();
+
+  const int token_cnt = position_ids.shape()[1];
+  const int token_offset = *position_ids.cptrAt<int64_t>({0, 0});
 
   const int B = x.shape()[0];
   const int S = x.shape()[1];
@@ -131,10 +135,12 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   key = k_rope_(key, sin_emb, cos_emb);
 
   // TODO: consider task split point
-  // Update KV cache
-  // TODO: FIXME, consider updating multiple KV at a time
-  auto [cached_key, cached_value] = state->update_kv(layer_idx_, key, value);
+  state->update_kv(layer_idx_, token_offset, token_cnt, key, value);
   Context::instance().tracer()->record<KVCacheCompleteEvent>(layer_idx_, S, 0);
+
+  auto kv_cache = state->get_kv(layer_idx_, 0, token_cnt + token_offset);
+  MLLM_RT_ASSERT(kv_cache);
+  auto [cached_key, cached_value] = *kv_cache;
 
   // Compute attention scores with scaling
   const float scale = 1.f / sqrtf(static_cast<float>(head_dim_));
@@ -162,11 +168,12 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   const auto& hidden_states = inputs[0];
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
+  const auto& position_ids = inputs[3];
   const auto state = args[0].get<GenerationState::ptr>();
   const int seq_len = hidden_states.shape()[1];
 
   // Self-attention with residual
-  auto attn_output = self_attn_(input_layer_norm_(hidden_states), sin_emb, cos_emb, AnyValue(state))[0];
+  auto attn_output = self_attn_(input_layer_norm_(hidden_states), sin_emb, cos_emb, position_ids, AnyValue(state))[0];
   recordEvent<SelfAttentionCompleteEvent>(self_attn_.layer_idx_, seq_len, 0);
   auto residual = attn_output + hidden_states;
 
@@ -193,9 +200,9 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   const auto& token_ids = inputs[0];
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
+  const auto& position_ids = inputs[3];
   const auto state = args[0].get<GenerationState::ptr>();
-  auto& position_ids = args[1].get<Tensor&>();
-  auto token_idx = *position_ids.offsettedPtr<int64_t>({0, 0});
+  auto token_idx = *position_ids.cptrAt<int64_t>({0, 0});
 
   const int seq_len = token_ids.shape()[1];
   const int num_chunks = (seq_len + chunksize_ - 1) / chunksize_;
@@ -217,7 +224,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
     // Process through all decoder layers
     for (int i = 0; i < static_cast<int>(decode_blocks_.list().size()); i++) {
       recordEvent<LayerBeginEvent>(i, chunk_len, token_idx);
-      x = decode_blocks_.list()[i](x, sin_chunk, cos_chunk, AnyValue(state))[0];
+      x = decode_blocks_.list()[i](x, sin_chunk, cos_chunk, position_ids, AnyValue(state))[0];
       recordEvent<LayerCompleteEvent>(i, chunk_len, token_idx);
     }
 
@@ -305,7 +312,7 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(
   // 同时传递 token_counter 用于记录每层完成时间
   // 模型会依次通过：嵌入层 -> 多个解码器层 -> 最终归一化
   // 输出形状: [B, S, hidden_size]
-  sequence = llm_(sequence, llm_embedding_sin, llm_embedding_cos, AnyValue(state_), AnyValue(position_ids))[0];
+  sequence = llm_(sequence, llm_embedding_sin, llm_embedding_cos, position_ids, AnyValue(state_))[0];
 
   // ========== 6. 提取最后一个 token 的表示 ==========
   // 对于自回归生成，通常只需要最后一个位置的隐藏状态
