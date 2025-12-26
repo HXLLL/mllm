@@ -1,0 +1,8 @@
+# Copyright (c) MLLM Team.
+# Licensed under the MIT License.
+
+Tasks:
+  - CMakeBuildTask:
+      cmake_cfg_path: "build"
+      targets: [ "mllm-llm-benchmark", "mllm-persistent-cache" ]
+
