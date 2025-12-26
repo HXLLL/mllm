@@ -9,9 +9,10 @@ void GenerationState::save(const std::filesystem::path& path) const {
   MLLM_INFO("GenerationState: Saving state to {}", path.string());
 }
 
+
 GenerationState::ptr GenerationState::create_or_recover(const std::filesystem::path& path) {
   if (std::filesystem::exists(path)) {
-    return std::make_shared<GenerationState>(load(path));
+    return std::make_shared<GenerationState>();
   } else {
     return std::make_shared<GenerationState>();
   }

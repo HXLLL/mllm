@@ -169,7 +169,7 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
   const auto& position_ids = inputs[3];
-  const auto state = args[0].get<GenerationState::ptr>();
+  auto state = args[0].get<GenerationState::ptr>();
   const int seq_len = hidden_states.shape()[1];
 
   // Self-attention with residual
@@ -201,7 +201,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
   const auto& position_ids = inputs[3];
-  const auto state = args[0].get<GenerationState::ptr>();
+  auto state = args[0].get<GenerationState::ptr>();
   auto token_idx = *position_ids.cptrAt<int64_t>({0, 0});
 
   const int seq_len = token_ids.shape()[1];

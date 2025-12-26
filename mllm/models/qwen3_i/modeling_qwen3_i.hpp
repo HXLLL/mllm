@@ -88,8 +88,6 @@ class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {
   explicit Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, const std::filesystem::path& state_dir);
 
   ARGenerationOutputPast forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) override;
-  void streamGenerate(const ARGenerationOutputPast& input, const ARGenerationArgs& args,
-                      const std::function<void(int64_t)>& callback) override;
 
   void sync_state();
   void setChunkSize(int chunksize) { llm_.setChunkSize(chunksize); }
