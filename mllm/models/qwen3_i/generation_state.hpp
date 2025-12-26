@@ -20,12 +20,12 @@ class GenerationState {
   void save(const std::filesystem::path& path) const;
 
   void sync_cache();
-  void update_kv(int layer_idx, int token_idx, const Tensor &k, const Tensor &v);
-  [[nodiscard]] std::optional<std::array<Tensor, 2>>get_kv(int layer_idx, int token_idx) const;
+  void update_kv(int layer_idx, int token_offset, int token_cnt, const Tensor &k, const Tensor &v);
+  [[nodiscard]] std::optional<std::array<Tensor, 2>>get_kv(int layer_idx, int token_offset, int token_cnt) const;
   void clear();
 
  private:
-  nn::PersistentCache* kv_cache;
+  nn::PersistentCache::ptr_t kv_cache_;
 };
 
 }  // namespace mllm::models::qwen3_i

@@ -32,12 +32,12 @@ void GenerationState::sync_cache() {
   MLLM_INFO("GenerationState: Syncing cache");
 }
 
-void GenerationState::update_kv(int layer_idx, int token_idx, const Tensor &k, const Tensor &v) {
-  MLLM_INFO("GenerationState: Updating KV cache");
+void GenerationState::update_kv(int layer_idx, int token_offset, int token_cnt, const Tensor &k, const Tensor &v) {
+  
 }
 
-std::optional<std::array<Tensor, 2>> GenerationState::get_kv(int layer_idx, int token_idx) const {
-  MLLM_INFO("GenerationState: Getting KV cache");
+std::optional<std::array<Tensor, 2>> GenerationState::get_kv(int layer_idx, int token_offset, int token_cnt) const {
+  MLLM_INFO("GenerationState: Getting KV cache for layer {}, token offset {}, token count {}", layer_idx, token_offset, token_cnt);
   return std::nullopt;
 }
 
