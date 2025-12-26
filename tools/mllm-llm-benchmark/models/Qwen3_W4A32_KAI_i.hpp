@@ -5,7 +5,6 @@
 #include <memory>
 #include <chrono>
 #include <filesystem>
-#include <iostream>
 
 #include "BenchmarkTemplate.hpp"
 #include <mllm/mllm.hpp>
@@ -32,7 +31,7 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
     model_ = std::make_unique<Qwen3IntermittentForCausalLM>(*config_, cache_path);
 
     // Load weights
-    auto param = mllm::load(model_path, mllm::ModelFileVersion::kV2);
+    auto param = mllm::load(model_path, mllm::ModelFileVersion::kV2, mllm::kCPU, false);
     model_->load(param);
     
     mllm::print("Model initialized successfully");
@@ -74,17 +73,7 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
   }
 
   void clear() override {
-    if (!model_) {
-      return;
-    }
-    
-    // Don't clear if there's pending work to resume
-    if (model_->hasPendingWork()) {
-      return;
-    }
-    
-    // Clear all state including KV cache, token counter, and pending tokens
-    model_->clearAllState();
+    // 
   }
 
   BenchmarkTemplateResult run(int32_t pp, int32_t tg) override {
