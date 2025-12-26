@@ -4,7 +4,7 @@
 #include "mllm/models/qwen3_i/modeling_qwen3_i.hpp"
 #include "mllm/models/qwen3_i/qwen3_events.hpp"
 #include "mllm/nn/Functional.hpp"
-#include "mllm/nn/lmcache/PersistentCache.hpp"
+#include "mllm/utils/AnyValue.hpp"
 #include "mllm/utils/Enumerate.hpp"
 #include <algorithm>
 #include <cmath>
@@ -23,11 +23,8 @@ static Tensor makeRoPEInvFreq(int output_dim, float rope_theta) {
   return inv_freq;
 }
 
-static std::pair<Tensor, Tensor> makeRotaryPosEmbedding(
-    const Tensor& position_ids, 
-    const Tensor& inv_freq, 
-    float attention_scaling) {
-  
+static std::pair<Tensor, Tensor> makeRotaryPosEmbedding(const Tensor& position_ids, const Tensor& inv_freq,
+                                                        float attention_scaling) {
   const auto batch_size = position_ids.shape()[0];
   const auto seq_len = position_ids.shape()[1];
   const auto inv_freq_len = inv_freq.shape()[0];
@@ -74,9 +71,12 @@ Qwen3MLP::Qwen3MLP(const std::string& name, const Qwen3Config& cfg) : nn::Module
 }
 
 std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  auto x = silu_(gate_proj_(inputs[0]));
-  x = x * up_proj_(inputs[0]);
-  return {down_proj_(x)};
+    auto x = gate_proj_(inputs[0]);
+    x = silu_(x);
+    auto y = up_proj_(inputs[0]);
+    x = x * y;
+    x = down_proj_(x);
+    return {x};
 }
 
 /** Qwen3Attention Implementation **/
@@ -107,7 +107,7 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   const auto& x = inputs[0];
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
-  auto* kv_cache = args[0].get<nn::PersistentCache*>();
+  auto state = args[0].get<GenerationState::ptr>();
 
   const int B = x.shape()[0];
   const int S = x.shape()[1];
@@ -132,7 +132,8 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
 
   // TODO: consider task split point
   // Update KV cache
-  auto [cached_key, cached_value] = kv_cache->updateKVCache(layer_idx_, key, value);
+  // TODO: FIXME, consider updating multiple KV at a time
+  auto [cached_key, cached_value] = state->update_kv(layer_idx_, key, value);
   Context::instance().tracer()->record<KVCacheCompleteEvent>(layer_idx_, S, 0);
 
   // Compute attention scores with scaling
@@ -161,11 +162,11 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   const auto& hidden_states = inputs[0];
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
-  const auto& kv_cache = args[0];
+  const auto state = args[0].get<GenerationState::ptr>();
   const int seq_len = hidden_states.shape()[1];
 
   // Self-attention with residual
-  auto attn_output = self_attn_(input_layer_norm_(hidden_states), sin_emb, cos_emb, kv_cache)[0];
+  auto attn_output = self_attn_(input_layer_norm_(hidden_states), sin_emb, cos_emb, AnyValue(state))[0];
   recordEvent<SelfAttentionCompleteEvent>(self_attn_.layer_idx_, seq_len, 0);
   auto residual = attn_output + hidden_states;
 
@@ -192,9 +193,10 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   const auto& token_ids = inputs[0];
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
-  const auto& kv_cache = args[0];
-  int token_idx = (args.size() > 1) ? args[1].get<int>() : 0;
-  
+  const auto state = args[0].get<GenerationState::ptr>();
+  auto& position_ids = args[1].get<Tensor&>();
+  auto token_idx = *position_ids.offsettedPtr<int64_t>({0, 0});
+
   const int seq_len = token_ids.shape()[1];
   const int num_chunks = (seq_len + chunksize_ - 1) / chunksize_;
   
@@ -215,7 +217,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
     // Process through all decoder layers
     for (int i = 0; i < static_cast<int>(decode_blocks_.list().size()); i++) {
       recordEvent<LayerBeginEvent>(i, chunk_len, token_idx);
-      x = decode_blocks_.list()[i](x, sin_chunk, cos_chunk, kv_cache)[0];
+      x = decode_blocks_.list()[i](x, sin_chunk, cos_chunk, AnyValue(state))[0];
       recordEvent<LayerCompleteEvent>(i, chunk_len, token_idx);
     }
 
@@ -224,9 +226,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 
     // Sync KV cache to disk after each chunk
     recordEvent<SyncStartEvent>(0, chunk_len, token_idx);
-    if (!kv_cache.get<nn::PersistentCache*>()->sync()) {
-      MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to sync KV cache");
-    }
+    state->sync_cache(); // TODO: FIX THIS
     recordEvent<SyncCompleteEvent>(0, chunk_len, token_idx);
   }
 
@@ -256,29 +256,6 @@ Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cf
 
   // Initialize RoPE inverse frequencies
   registerBuffer("inv_freq", makeRoPEInvFreq(cfg_.head_dim, cfg_.rope_theta));
-}
-
-Tensor Qwen3IntermittentForCausalLM::createPositionIds(int batch_size, int seq_len, int offset) {
-  auto pos_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
-  auto* ptr = pos_ids.ptr<int64_t>();
-  
-  for (int s = 0; s < seq_len; ++s) {
-    const int64_t pos = s + offset;
-    for (int b = 0; b < batch_size; ++b) {
-      ptr[b * seq_len + s] = pos;
-    }
-  }
-  return pos_ids;
-}
-
-Tensor Qwen3IntermittentForCausalLM::updatePositionIdsForDecode(
-    const Tensor& prev_position_ids, int batch_size) {
-  const int prev_len = prev_position_ids.shape()[1];
-  const int64_t next_pos = prev_position_ids.ptr<int64_t>()[prev_len - 1] + 1;
-  
-  auto new_pos = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
-  std::fill_n(new_pos.ptr<int64_t>(), batch_size, next_pos);
-  return new_pos;
 }
 
 ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(
