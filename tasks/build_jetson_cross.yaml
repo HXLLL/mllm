@@ -4,7 +4,7 @@
 Tasks:
   - CMakeConfigTask:
       cmake_cfg_path: "build"
-      cmake_toolchain_file: "$HOME/l4t-gcc/share/buildroot/toolchainfile.cmake"
+      cmake_toolchain_file: "./tasks/build_jetson_cross-toolchain.cmake"
       cmake_build_type: "RelWithDebInfo" 
       cmake_extra_args:
         - "-DMLLM_BUILD_ARM_BACKEND=ON"
