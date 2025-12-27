@@ -194,6 +194,7 @@ Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg) : nn::Modu
   }
   norm_ = reg<nn::RMSNorm>("norm", cfg.rms_norm_eps);
   embedding_ = reg<nn::Embedding>("embed_tokens", cfg.vocab_size, cfg.hidden_size);
+
 }
 
 std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
