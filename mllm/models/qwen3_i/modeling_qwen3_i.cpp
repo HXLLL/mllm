@@ -79,32 +79,39 @@ std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const s
     return {x};
 }
 
-/** Qwen3Attention Implementation **/
+/** Qwen3Decoder Implementation **/
 
-Qwen3Attention::Qwen3Attention(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
+Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
+  // Initialize attention configuration
   hidden_size_ = cfg.hidden_size;
   num_attention_heads_ = cfg.num_attention_heads;
   num_key_value_heads_ = cfg.num_key_value_heads;
   head_dim_ = cfg.head_dim;
   num_key_value_groups_ = num_attention_heads_ / num_key_value_heads_;
 
-  q_proj_ = reg<nn::Linear>("q_proj", hidden_size_, head_dim_ * num_attention_heads_, cfg.attention_bias, cfg.linear_impl_type);
-  k_proj_ = reg<nn::Linear>("k_proj", hidden_size_, head_dim_ * num_key_value_heads_, cfg.attention_bias, cfg.linear_impl_type);
-  v_proj_ = reg<nn::Linear>("v_proj", hidden_size_, head_dim_ * num_key_value_heads_, cfg.attention_bias, cfg.linear_impl_type);
-  o_proj_ = reg<nn::Linear>("o_proj", head_dim_ * num_attention_heads_, hidden_size_, cfg.attention_bias, cfg.linear_impl_type);
+  // Register attention components
+  q_proj_ = reg<nn::Linear>("self_attn.q_proj", hidden_size_, head_dim_ * num_attention_heads_, cfg.attention_bias, cfg.linear_impl_type);
+  k_proj_ = reg<nn::Linear>("self_attn.k_proj", hidden_size_, head_dim_ * num_key_value_heads_, cfg.attention_bias, cfg.linear_impl_type);
+  v_proj_ = reg<nn::Linear>("self_attn.v_proj", hidden_size_, head_dim_ * num_key_value_heads_, cfg.attention_bias, cfg.linear_impl_type);
+  o_proj_ = reg<nn::Linear>("self_attn.o_proj", head_dim_ * num_attention_heads_, hidden_size_, cfg.attention_bias, cfg.linear_impl_type);
 
-  rms_norm_q_ = reg<nn::RMSNorm>("q_norm", cfg.rms_norm_eps);
-  rms_norm_k_ = reg<nn::RMSNorm>("k_norm", cfg.rms_norm_eps);
+  rms_norm_q_ = reg<nn::RMSNorm>("self_attn.q_norm", cfg.rms_norm_eps);
+  rms_norm_k_ = reg<nn::RMSNorm>("self_attn.k_norm", cfg.rms_norm_eps);
 
-  q_rope_ = reg<nn::RoPE>("q_rope", cfg.rope_theta, cfg.max_position_embeddings);
-  k_rope_ = reg<nn::RoPE>("k_rope", cfg.rope_theta, cfg.max_position_embeddings);
+  q_rope_ = reg<nn::RoPE>("self_attn.q_rope", cfg.rope_theta, cfg.max_position_embeddings);
+  k_rope_ = reg<nn::RoPE>("self_attn.k_rope", cfg.rope_theta, cfg.max_position_embeddings);
 
-  mask_ = reg<nn::CausalMask>("mask");
-  softmax_ = reg<nn::Softmax>("softmax", -1);
+  mask_ = reg<nn::CausalMask>("self_attn.mask");
+  softmax_ = reg<nn::Softmax>("self_attn.softmax", -1);
+
+  // Register MLP and layer norms
+  mlp_ = reg<Qwen3MLP>("mlp", cfg);
+  input_layer_norm_ = reg<nn::RMSNorm>("input_layernorm", cfg.rms_norm_eps);
+  post_attention_layer_norm_ = reg<nn::RMSNorm>("post_attention_layernorm", cfg.rms_norm_eps);
 }
 
-std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  const auto& x = inputs[0];
+std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
+  const auto& hidden_states = inputs[0];
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
   const auto& position_ids = inputs[3];
@@ -113,8 +120,11 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   const int token_cnt = position_ids.shape()[1];
   const int token_offset = *position_ids.cptrAt<int64_t>({0, 0});
 
-  const int B = x.shape()[0];
-  const int S = x.shape()[1];
+  const int B = hidden_states.shape()[0];
+  const int S = hidden_states.shape()[1];
+
+  // Apply input layer norm
+  auto x = input_layer_norm_(hidden_states);
 
   // Project to Q, K, V
   auto query = q_proj_(x).view({B, S, num_attention_heads_, head_dim_});
@@ -139,7 +149,7 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   Context::instance().tracer()->record<KVCacheCompleteEvent>(layer_idx_, S, 0);
 
   auto kv_cache = state->get_kv(layer_idx_, 0, token_cnt + token_offset);
-  MLLM_RT_ASSERT(kv_cache);
+  // MLLM_RT_ASSERT(kv_cache);
   auto [cached_key, cached_value] = *kv_cache;
 
   // Compute attention scores with scaling
@@ -152,35 +162,14 @@ std::vector<Tensor> Qwen3Attention::forward(const std::vector<Tensor>& inputs, c
   auto output = nn::functional::matmul(attn, cached_value);
   output = output.transpose(1, 2).view({B, S, num_attention_heads_ * head_dim_});
   
-  return {o_proj_(output)};
-}
-
-/** Qwen3Decoder Implementation **/
-
-Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
-  self_attn_ = reg<Qwen3Attention>("self_attn", cfg);
-  mlp_ = reg<Qwen3MLP>("mlp", cfg);
-  input_layer_norm_ = reg<nn::RMSNorm>("input_layernorm", cfg.rms_norm_eps);
-  post_attention_layer_norm_ = reg<nn::RMSNorm>("post_attention_layernorm", cfg.rms_norm_eps);
-}
-
-std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  const auto& hidden_states = inputs[0];
-  const auto& sin_emb = inputs[1];
-  const auto& cos_emb = inputs[2];
-  const auto& position_ids = inputs[3];
-  auto state = args[0].get<GenerationState::ptr>();
-  const int seq_len = hidden_states.shape()[1];
-
-  // Self-attention with residual
-  auto attn_output = self_attn_(input_layer_norm_(hidden_states), sin_emb, cos_emb, position_ids, AnyValue(state))[0];
-  recordEvent<SelfAttentionCompleteEvent>(self_attn_.layer_idx_, seq_len, 0);
+  auto attn_output = o_proj_(output);
+  recordEvent<SelfAttentionCompleteEvent>(layer_idx_, S, 0);
   auto residual = attn_output + hidden_states;
 
   // MLP with residual
-  recordEvent<MLPBeginEvent>(self_attn_.layer_idx_, seq_len, 0);
+  recordEvent<MLPBeginEvent>(layer_idx_, S, 0);
   auto mlp_output = mlp_(post_attention_layer_norm_(residual))[0];
-  recordEvent<MLPCompleteEvent>(self_attn_.layer_idx_, seq_len, 0);
+  recordEvent<MLPCompleteEvent>(layer_idx_, S, 0);
 
   return {mlp_output + residual};
 }
@@ -190,12 +179,28 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
 Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
   decode_blocks_ = reg<nn::ModuleList<Qwen3Decoder>>("layers", cfg.num_hidden_layers, cfg);
   for (auto [idx, block] : enumerate(decode_blocks_.list())) {
-    block.self_attn_.layer_idx_ = idx;
+    block.layer_idx_ = idx;
   }
   norm_ = reg<nn::RMSNorm>("norm", cfg.rms_norm_eps);
   embedding_ = reg<nn::Embedding>("embed_tokens", cfg.vocab_size, cfg.hidden_size);
-
 }
+
+class Task {
+
+};
+
+class H2KVTask : public Task {
+
+};
+
+class KV2HTask : public Task {
+  Qwen3MLP &mlp_;
+
+};
+
+class ChunkLayerTask : public Task {
+};
+
 
 std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
   const auto& token_ids = inputs[0];
@@ -249,7 +254,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, const std::filesystem::path& state_dir)
     : cfg_(cfg) {
   MLLM_INFO("Initializing intermittent Qwen3 model");
-  state_ = GenerationState::create_or_recover(state_dir);
+  state_ = GenerationState::create_or_recover(cfg, state_dir);
 
   // Initialize model components
   eos_token_id_ = cfg_.end_of_text_token_id;
@@ -266,10 +271,8 @@ Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cf
   registerBuffer("inv_freq", makeRoPEInvFreq(cfg_.head_dim, cfg_.rope_theta));
 }
 
-ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(
-    const ARGenerationOutputPast& input, 
-    const ARGenerationArgs& args) {
-
+ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationOutputPast& input,
+                                                             const ARGenerationArgs& args) {
   auto sequence = input.at("sequence");
 
   auto batch_size = sequence.shape()[0];

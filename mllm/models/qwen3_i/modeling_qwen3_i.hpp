@@ -27,15 +27,16 @@ class Qwen3MLP final : public nn::Module {
   nn::SiLU silu_;
 };
 
-class Qwen3Attention final : public nn::Module {
+class Qwen3Decoder final : public nn::Module {
  public:
-  Qwen3Attention() = default;
-  Qwen3Attention(const std::string& name, const Qwen3Config& cfg);
+  Qwen3Decoder() = default;
+  Qwen3Decoder(const std::string& name, const Qwen3Config& cfg);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 
   int layer_idx_ = 0;
 
  private:
+  // Attention components (inlined from Qwen3Attention)
   nn::Linear q_proj_;
   nn::Linear k_proj_;
   nn::Linear v_proj_;
@@ -52,17 +53,8 @@ class Qwen3Attention final : public nn::Module {
   int num_attention_heads_ = 0;
   int num_key_value_heads_ = 0;
   int num_key_value_groups_ = 0;
-};
 
-class Qwen3Decoder final : public nn::Module {
- public:
-  Qwen3Decoder() = default;
-  Qwen3Decoder(const std::string& name, const Qwen3Config& cfg);
-  std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
-
-  Qwen3Attention self_attn_;  // Public for layer_idx access
-
- private:
+  // MLP and layer norms
   Qwen3MLP mlp_;
   nn::RMSNorm input_layer_norm_;
   nn::RMSNorm post_attention_layer_norm_;
