@@ -3,29 +3,32 @@
 #include <optional>
 #include "mllm/core/Tensor.hpp"
 #include "mllm/mllm.hpp"
-#include "mllm/nn/lmcache/PersistentCache.hpp"
+#include "mllm/models/qwen3/configuration_qwen3.hpp"
 
 namespace mllm::models::qwen3_i {
 
 class GenerationState {
  public:
   using ptr = std::shared_ptr<GenerationState>;
+  using Qwen3Config = models::qwen3::Qwen3Config;
 
-  GenerationState();
+  GenerationState(const std::filesystem::path& path, int max_length, int layer_nums, int q_heads, int kv_heads, int kv_dim);
 
-  static ptr create_or_recover(const std::filesystem::path& path);
-  static ptr recover(const std::filesystem::path& path);
-  static ptr create(const std::filesystem::path& path);
+  static ptr create_or_recover(const Qwen3Config& cfg, const std::filesystem::path& path);
+  static ptr recover(const Qwen3Config& cfg, const std::filesystem::path& path);
+  static ptr create(const Qwen3Config& cfg, const std::filesystem::path& path);
 
-  void save(const std::filesystem::path& path) const;
+  void save() const;
 
   void sync_cache();
   void update_kv(int layer_idx, int token_offset, int token_cnt, const Tensor &k, const Tensor &v);
-  [[nodiscard]] std::optional<std::array<Tensor, 2>>get_kv(int layer_idx, int token_offset, int token_cnt) const;
+  [[nodiscard]] std::optional<std::array<Tensor, 2>>get_kv(int layer_idx, int token_offset, int token_cnt);
   void clear();
 
  private:
-  nn::PersistentCache::ptr_t kv_cache_;
+  nn::StaticCache kv_cache_;
+  Qwen3Config cfg_;
+  std::filesystem::path path_;
 };
 
 }  // namespace mllm::models::qwen3_i
