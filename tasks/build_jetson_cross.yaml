@@ -16,10 +16,6 @@ Tasks:
         - "-DMLLM_ENABLE_BENCHMARK=ON"
         - "-DMLLM_ENABLE_TEST=ON"
         - "-DMLLM_ENABLE_TOOLS=ON"
-        - "-DHAVE_STD_REGEX=0"
-        - "-DHAVE_POSIX_REGEX=0"
-        - "-DHAVE_STEADY_CLOCK=0"
-        - "-DHAVE_PTHREAD_AFFINITY=0"
   - CMakeBuildTask:
       cmake_cfg_path: "build"
       targets: [ "mllm-llm-benchmark", "mllm-persistent-cache" ]
