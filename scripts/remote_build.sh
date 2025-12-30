@@ -17,7 +17,8 @@ time ssh g "source ~/.zshrc; cd /home/xiaolonghuang/mllm/ && CCACHE_SLOPPINESS=t
         -e 's/\/home\/xiaolonghuang\/l4t-gcc\/bin\/aarch64-buildroot-linux-gnu-g++/\/usr\/bin\/g++/'
 
 echo Sync back build artifacts
-time rsync -a ${PROGRESS_ARGS}  g:/home/xiaolonghuang/mllm/build/  ./build/ 
+time rsync -a ${PROGRESS_ARGS}  g:/home/xiaolonghuang/mllm/build/bin/  ./build/bin/
+scp g:/home/xiaolonghuang/mllm/build/compile_commands.json ./build/compile_commands.json
 
 rm ./compile_commands.json
 sed -i 's/\/home\/xiaolonghuang\/mllm/\/home\/xiaolong\/mllm/g' ./build/compile_commands.json
