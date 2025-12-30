@@ -38,11 +38,12 @@ static void print_device_info() {
   mllm::print("FMA                :", mllm::cpu::hasFMA());
 }
 
-static void print_basic_info(auto &benchmark) {
-  // Print Build Version
-  mllm::print("MLLM Build Version :", STRINGIFY(MLLM_GIT_COMMIT_HASH));
+static void print_basic_info(auto &benchmark, bool verbose = false) {
+  mllm::print("Verbose level: {}", verbose);
 
-  print_device_info();
+  if (verbose) {
+    print_device_info();
+  }
 
   // Print Threading Implementation Info
   mllm::print("\n========== Threading Implementation ==========");
@@ -81,6 +82,7 @@ MLLM_MAIN({
   auto& intermittent = mllm::Argparse::add<bool>("-i|--intermittent").help("Intermittent mode (default: false)");
   auto& cache_dir = mllm::Argparse::add<std::string>("--cache_dir").help("Cache directory path for persistent KV cache (default: ./data/qwen3_i_kvcache)");
   auto& tokenizer_path = mllm::Argparse::add<std::string>("-t|--tokenizer_path").help("Tokenizer path");
+  auto& verbose = mllm::Argparse::add<int32_t>("-v|--verbose").help("Verbose level");
   mllm::Argparse::parse(argc, argv);
 
   // Set CPU operation threads if specified
