@@ -1,3 +1,4 @@
+add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.")
 set(CMAKE_BUILD_RPATH "\$ORIGIN")
 
 set(CMAKE_SYSTEM_NAME Linux)
