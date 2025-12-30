@@ -125,21 +125,17 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
 
   // Apply input layer norm
   auto x = input_layer_norm_(hidden_states);
-
   // Project to Q, K, V
   auto query = q_proj_(x).view({B, S, num_attention_heads_, head_dim_});
   auto key = k_proj_(x).view({B, S, num_key_value_heads_, head_dim_});
   auto value = v_proj_(x).view({B, S, num_key_value_heads_, head_dim_});
-
   // Apply QK normalization
   query = rms_norm_q_(query);
   key = rms_norm_k_(key);
-
   // Transpose to [B, H, S, D] for attention computation
   query = query.transpose(1, 2);
   key = key.transpose(1, 2);
   value = value.transpose(1, 2);
-
   // Apply RoPE
   query = q_rope_(query, sin_emb, cos_emb);
   key = k_rope_(key, sin_emb, cos_emb);
@@ -149,7 +145,7 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   Context::instance().tracer()->record<KVCacheCompleteEvent>(layer_idx_, S, 0);
 
   auto kv_cache = state->get_kv(layer_idx_, 0, token_cnt + token_offset);
-  // MLLM_RT_ASSERT(kv_cache);
+  MLLM_RT_ASSERT(kv_cache);
   auto [cached_key, cached_value] = *kv_cache;
 
   // Compute attention scores with scaling
@@ -157,15 +153,11 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
   Tensor attn = (cached_key.dtype() == kFloat32)
       ? softmax_(mask_(nn::functional::matmul(query, cached_key, false, true) * scale))
       : softmax_(mask_(nn::functional::matmul(query.to(kFloat32), cached_key.to(kFloat32), false, true) * scale)).to(kFloat16);
-
-  // Compute output
   auto output = nn::functional::matmul(attn, cached_value);
   output = output.transpose(1, 2).view({B, S, num_attention_heads_ * head_dim_});
-  
   auto attn_output = o_proj_(output);
   recordEvent<SelfAttentionCompleteEvent>(layer_idx_, S, 0);
   auto residual = attn_output + hidden_states;
-
   // MLP with residual
   recordEvent<MLPBeginEvent>(layer_idx_, S, 0);
   auto mlp_output = mlp_(post_attention_layer_norm_(residual))[0];
