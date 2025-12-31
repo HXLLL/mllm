@@ -36,12 +36,16 @@ void GenerationState::sync_cache() {
   // MLLM_INFO("GenerationState: Syncing cache");
 }
 
-void GenerationState::update_kv(int layer_idx, int token_offset, int token_cnt, const Tensor &k, const Tensor &v) {
+void GenerationState::update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v) {
   kv_cache_.updateKVCache(layer_idx, k, v);
 }
 
-std::optional<std::array<Tensor, 2>> GenerationState::get_kv(int layer_idx, int token_offset, int token_cnt) {
-  // MLLM_INFO("GenerationState: Getting KV cache for layer {}, token offset {}, token count {}", layer_idx, token_offset, token_cnt);
+void GenerationState::update_h(int layer_idx, int offset, int count, const Tensor &h) {
+  // h_cache_.updateHiddenStateCache(layer_idx, offset, count, h);
+}
+
+std::optional<std::array<Tensor, 2>> GenerationState::get_kv(int layer_idx, int offset, int count) {
+  // MLLM_INFO("GenerationState: Getting KV cache for layer {}, token offset {}, token count {}", layer_idx, offset, count);
   return {kv_cache_.getKVCache(layer_idx)};
 }
 

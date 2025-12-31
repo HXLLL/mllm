@@ -21,8 +21,9 @@ class GenerationState {
   void save() const;
 
   void sync_cache();
-  void update_kv(int layer_idx, int token_offset, int token_cnt, const Tensor &k, const Tensor &v);
-  [[nodiscard]] std::optional<std::array<Tensor, 2>>get_kv(int layer_idx, int token_offset, int token_cnt);
+  void update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v);
+  void update_h(int layer_idx, int offset, int count, const Tensor &h);
+  [[nodiscard]] std::optional<std::array<Tensor, 2>>get_kv(int layer_idx, int offset, int count);
   void clear();
 
  private:
