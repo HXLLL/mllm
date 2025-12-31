@@ -19,7 +19,6 @@ class GenerationState {
   static ptr create(const Qwen3Config& cfg, const std::filesystem::path& path);
 
   void save() const;
-
   void sync_cache();
   void update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v);
   void update_h(int layer_idx, int offset, int count, const Tensor &h);
@@ -28,7 +27,6 @@ class GenerationState {
 
  private:
   nn::StaticCache kv_cache_;
-  Qwen3Config cfg_;
   std::filesystem::path path_;
 };
 

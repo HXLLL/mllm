@@ -7,61 +7,13 @@
 #include "mllm/nn/Functional.hpp"
 #include "mllm/nn/Module.hpp"
 #include "mllm/utils/AnyValue.hpp"
+#include "mllm/utils/RoPE.hpp"
 #include <algorithm>
 #include <cmath>
 #include <nlohmann/json.hpp>
 
 
 namespace mllm::models::qwen3_i {
-
-/** RoPE utilities **/
-
-static Tensor makeRoPEInvFreq(int output_dim, float rope_theta) {
-  auto inv_freq = Tensor::empty({output_dim / 2}, kFloat32, kCPU).alloc();
-  auto* ptr = inv_freq.ptr<float>();
-  for (int i = 0; i < output_dim / 2; i++) {
-    ptr[i] = 1.0f / std::pow(rope_theta, 2.0f * i / output_dim);
-  }
-  return inv_freq;
-}
-
-static std::pair<Tensor, Tensor> makeRotaryPosEmbedding(const Tensor& position_ids, const Tensor& inv_freq,
-                                                        float attention_scaling) {
-  const auto batch_size = position_ids.shape()[0];
-  const auto seq_len = position_ids.shape()[1];
-  const auto inv_freq_len = inv_freq.shape()[0];
-  const auto dim = inv_freq_len * 2;
-
-  // Create sin/cos embeddings with [freqs, freqs] pattern
-  auto sin_emb = Tensor::empty({batch_size, seq_len, dim}, kFloat32, kCPU).alloc();
-  auto cos_emb = Tensor::empty({batch_size, seq_len, dim}, kFloat32, kCPU).alloc();
-  auto* sin_ptr = sin_emb.ptr<float>();
-  auto* cos_ptr = cos_emb.ptr<float>();
-  const auto* position_ids_ptr = position_ids.ptr<int64_t>();
-  const auto* inv_freq_ptr = inv_freq.ptr<float>();
-
-  // Compute frequencies and sin/cos in a single pass
-  for (int b = 0; b < batch_size; ++b) {
-    for (int s = 0; s < seq_len; ++s) {
-      const auto pos = static_cast<float>(position_ids_ptr[b * seq_len + s]);
-      const int base_idx = b * seq_len * dim + s * dim;
-      
-      for (int d = 0; d < inv_freq_len; ++d) {
-        const auto freq = pos * inv_freq_ptr[d];
-        const auto sin_val = std::sin(freq) * attention_scaling;
-        const auto cos_val = std::cos(freq) * attention_scaling;
-
-        // Store to both halves (RoPE [freqs, freqs] pattern)
-        sin_ptr[base_idx + d] = sin_val;
-        sin_ptr[base_idx + d + inv_freq_len] = sin_val;
-        cos_ptr[base_idx + d] = cos_val;
-        cos_ptr[base_idx + d + inv_freq_len] = cos_val;
-      }
-    }
-  }
-
-  return {sin_emb, cos_emb};
-}
 
 /** Qwen3MLP Implementation **/
 
@@ -111,52 +63,7 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, Gene
 }
 
 std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  const auto& hidden_states = inputs[0];
-  const auto& sin_emb = inputs[1];
-  const auto& cos_emb = inputs[2];
-  int offset = args[0].get<int>();
-  int count = args[1].get<int>();
-
-  // Apply input layer norm
-  auto x = input_layer_norm_(hidden_states);
-  // Project to Q, K, V
-  auto query = q_proj_(x).view({1, count, num_attention_heads_, head_dim_});
-  auto key = k_proj_(x).view({1, count, num_key_value_heads_, head_dim_});
-  auto value = v_proj_(x).view({1, count, num_key_value_heads_, head_dim_});
-  // Apply QK normalization
-  query = rms_norm_q_(query);
-  key = rms_norm_k_(key);
-  // Transpose to [B, H, S, D] for attention computation
-  query = query.transpose(1, 2);
-  key = key.transpose(1, 2);
-  value = value.transpose(1, 2);
-  // Apply RoPE
-  query = q_rope_(query, sin_emb, cos_emb);
-  key = k_rope_(key, sin_emb, cos_emb);
-
-  // TODO: consider task split point
-  state_.update_kv(layer_idx_, offset, count, key, value);
-
-  auto kv_cache = state_.get_kv(layer_idx_, 0, count + offset);
-  MLLM_RT_ASSERT(kv_cache);
-  auto [cached_key, cached_value] = *kv_cache;
-
-  // Compute attention scores with scaling
-  const float scale = 1.f / sqrtf(static_cast<float>(head_dim_));
-  Tensor attn = (cached_key.dtype() == kFloat32)
-      ? softmax_(mask_(nn::functional::matmul(query, cached_key, false, true) * scale))
-      : softmax_(mask_(nn::functional::matmul(query.to(kFloat32), cached_key.to(kFloat32), false, true) * scale)).to(kFloat16);
-  auto output = nn::functional::matmul(attn, cached_value);
-  output = output.transpose(1, 2).view({1, count, num_attention_heads_ * head_dim_});
-  auto attn_output = o_proj_(output);
-  recordEvent<SelfAttentionCompleteEvent>(layer_idx_, count, 0);
-  auto residual = attn_output + hidden_states;
-  // MLP with residual
-  recordEvent<MLPBeginEvent>(layer_idx_, count, 0);
-  auto mlp_output = mlp_(post_attention_layer_norm_(residual))[0];
-  recordEvent<MLPCompleteEvent>(layer_idx_, count, 0);
-
-  return {mlp_output + residual};
+  return {};
 }
 
 /** Qwen3Text Implementation **/
@@ -182,16 +89,15 @@ std::vector<Tensor> H2KV::forward(const std::vector<Tensor>& inputs, const std::
   const auto& hidden_states = inputs[0];
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
-
-  const int B = hidden_states.shape()[0];
-  const int S = hidden_states.shape()[1];
+  assert(hidden_states.shape()[0] == 1);
+  const int count = hidden_states.shape()[1];
 
   // Apply input layer norm
   auto x = input_layer_norm_(hidden_states);
   // Project to Q, K, V
-  auto query = q_proj_(x).view({B, S, num_attention_heads_, head_dim_});
-  auto key = k_proj_(x).view({B, S, num_key_value_heads_, head_dim_});
-  auto value = v_proj_(x).view({B, S, num_key_value_heads_, head_dim_});
+  auto query = q_proj_(x).view({1, count, num_attention_heads_, head_dim_});
+  auto key = k_proj_(x).view({1, count, num_key_value_heads_, head_dim_});
+  auto value = v_proj_(x).view({1, count, num_key_value_heads_, head_dim_});
   // Apply QK normalization
   query = rms_norm_q_(query);
   key = rms_norm_k_(key);
@@ -218,25 +124,14 @@ KV2H::KV2H(Qwen3Decoder& decoder, GenerationState &state)
       state_(state)
        {}
 
-/**
- * @brief input: h, k, q, position_ids
- * 
- * @param inputs 
- * @param args 
- * @return std::vector<Tensor> 
- */
 std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
   const auto& hidden_states = inputs[0];
-  const auto& query_orig = inputs[1];
+  auto query = inputs[1].clone();
   const auto& key = inputs[2];
   const int offset = args[0].get<int>();
   const int count = hidden_states.shape()[1];
 
-  Tensor query = query_orig.clone();
-
-  auto kv_cache = state_.get_kv(layer_idx_, 0, offset + count);
-  MLLM_RT_ASSERT(kv_cache);
-  auto [cached_key, cached_value] = *kv_cache;
+  auto [cached_key, cached_value] = *state_.get_kv(layer_idx_, 0, offset + count);
 
   // Compute attention scores with scaling
   const float scale = 1.f / sqrtf(static_cast<float>(head_dim_));
@@ -271,7 +166,6 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
   const auto& position_ids = inputs[3];
-  auto token_idx = *position_ids.cptrAt<int64_t>({0, 0});
 
   seq_len_ = token_ids.shape()[1];
   num_chunks_ = (seq_len_ + chunksize_ - 1) / chunksize_;
@@ -280,10 +174,10 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   chunk_outputs.reserve(num_chunks_);
 
   // Chunked prefill
+  auto offset = *position_ids.cptrAt<int64_t>({0, 0});
   for (int i = 0; i < num_chunks_; i++) {
     const int chunk_start = i * chunksize_;
     const int chunk_end = std::min(chunk_start + chunksize_, seq_len_);
-    int offset = *position_ids.cptrAt<int64_t>({0, chunk_start});
     int len = chunk_end - chunk_start;
 
     // Embed and slice position encodings for this chunk
@@ -293,7 +187,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 
     // Process through all decoder layers
     for (int j = 0; j < static_cast<int>(decode_blocks_.list().size()); j++) {
-      recordEvent<LayerBeginEvent>(j, len, token_idx);
+      recordEvent<LayerBeginEvent>(j, len, offset);
       auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
       auto &h = h2kv_result[0];
       auto &q = h2kv_result[1];
@@ -301,11 +195,11 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
       auto &v = h2kv_result[3];
       state_.update_kv(j, offset, len, k, v);
       x = kv2h_[j](h, q, k, AnyValue(offset))[0];
-      recordEvent<LayerCompleteEvent>(j, len, token_idx);
+      recordEvent<LayerCompleteEvent>(j, len, offset);
     }
 
     chunk_outputs.push_back(x);
-    token_idx += len;
+    offset += len;
     state_.sync_cache(); // TODO: FIX THIS
   }
 
