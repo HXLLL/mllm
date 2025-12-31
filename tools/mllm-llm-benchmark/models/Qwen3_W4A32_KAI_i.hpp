@@ -31,8 +31,12 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
     model_ = std::make_unique<Qwen3IntermittentForCausalLM>(*config_, cache_path);
 
     // Load weights
+    auto start = std::chrono::high_resolution_clock::now();
     auto param = mllm::load(model_path, mllm::ModelFileVersion::kV2, mllm::kCPU, false);
     model_->load(param);
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    mllm::print("Model weights loaded in", elapsed.count(), "seconds");
     
     mllm::print("Model initialized successfully");
     if (!cache_dir.empty()) {
@@ -117,7 +121,6 @@ class Qwen3_W4A32_KAI_Benchmark_Intermittent final : public BenchmarkTemplate {
       token_count++;
       decode_end = std::chrono::high_resolution_clock::now();
       num_tokens++;
-      mllm::print("Token", num_tokens, ":", token_id);
     });
     // Calculate durations
     auto prefill_duration = std::chrono::duration_cast<std::chrono::microseconds>(decode_start - prefill_start).count();

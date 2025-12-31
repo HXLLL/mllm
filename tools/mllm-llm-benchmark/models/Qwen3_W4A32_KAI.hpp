@@ -28,8 +28,12 @@ class Qwen3_W4A32_KAI_Benchmark final : public BenchmarkTemplate {
     model_ = std::make_unique<Qwen3ForCausalLM>(*config_);
     
     // Load weights
-    auto param = mllm::load(model_path, mllm::ModelFileVersion::kV2);
+    auto start = std::chrono::high_resolution_clock::now();
+    auto param = mllm::load(model_path, mllm::ModelFileVersion::kV2, mllm::kCPU, false);
     model_->load(param);
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    mllm::print("Model weights loaded in", elapsed.count(), "seconds");
     
     mllm::print("Model initialized successfully");
   }
