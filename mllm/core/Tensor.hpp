@@ -568,7 +568,7 @@ class Tensor {
    *
    * @return Tensor
    */
-  Tensor clone();
+  Tensor clone() const;
 
   /**
    * @brief copy a tensor to another

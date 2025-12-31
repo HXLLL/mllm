@@ -475,7 +475,7 @@ Tensor Tensor::flatten(int32_t dim) {
   return view(new_shape);
 }
 
-Tensor Tensor::clone() { return Context::instance().buildOpAndSubmitTask(OpTypes::kClone, aops::CloneOpOptions{}, {*this})[0]; }
+Tensor Tensor::clone() const { return Context::instance().buildOpAndSubmitTask(OpTypes::kClone, aops::CloneOpOptions{}, {*this})[0]; }
 
 void Tensor::copy2(const Tensor& src) {
   (void)Context::instance().buildOpAndSubmitTask(OpTypes::kCopy, aops::CopyOpOptions{}, {*this, src});
