@@ -174,7 +174,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   chunk_outputs.reserve(num_chunks_);
 
   // Chunked prefill
-  auto offset = *position_ids.cptrAt<int64_t>({0, 0});
+  int offset = *position_ids.cptrAt<int64_t>({0, 0});
   for (int i = 0; i < num_chunks_; i++) {
     const int chunk_start = i * chunksize_;
     const int chunk_end = std::min(chunk_start + chunksize_, seq_len_);
