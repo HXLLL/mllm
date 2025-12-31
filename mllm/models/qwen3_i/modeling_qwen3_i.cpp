@@ -226,30 +226,19 @@ Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cf
 ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationOutputPast& input,
                                                              const ARGenerationArgs& args) {
   auto sequence = input.at("sequence");
-
   auto batch_size = sequence.shape()[0];
   assert(batch_size == 1);
   auto seq_len = sequence.shape()[1];
 
-  // ========== 3. 生成位置编码 (Position IDs) ==========
-  // 根据是预填充阶段还是解码阶段，生成或更新位置编码
   Tensor position_ids = Tensor::nil();
   if (input.count("position_ids")) {
-    // ========== 3.1 解码阶段 ==========
-    // 如果输入中已有 position_ids，说明是增量解码阶段
-    // 需要基于之前的位置继续递增
     position_ids = input.at("position_ids");
-
-    // 对于单 token 解码（seq_len == 1），将最后一个位置加 1
     if (seq_len == 1) {
       auto last_pos = *position_ids.offsettedPtr<int64_t>({0, position_ids.shape()[1] - 1});
       position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
       *position_ids.offsettedPtr<int64_t>({0, 0}) = last_pos + 1;
     }
   } else {
-    // ========== 3.2 预填充阶段 ==========
-    // 如果是首次输入（预填充阶段），生成从 0 开始的位置编码
-    // 位置编码: [0, 1, 2, ..., seq_len-1]
     position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
     auto position_ids_ptr = position_ids.ptr<int64_t>();
     for (int b = 0; b < batch_size; ++b) {
@@ -257,36 +246,14 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
     }
   }
 
-  // ========== 4. 生成 RoPE 位置编码 ==========
-  // 基于位置编码和预计算的逆频率，生成旋转位置编码的正弦和余弦值
-  // 这些值将用于在注意力计算中注入位置信息
-  // 输出形状: [B, S, head_dim] (sin 和 cos 各一个)
   auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
-
-  // ========== 5. 通过 Transformer 模型前向传播 ==========
-  // 将 token 序列、RoPE 编码和 KV cache 传入模型
-  // 同时传递 token_counter 用于记录每层完成时间
-  // 模型会依次通过：嵌入层 -> 多个解码器层 -> 最终归一化
-  // 输出形状: [B, S, hidden_size]
   sequence = llm_(sequence, llm_embedding_sin, llm_embedding_cos, position_ids, AnyValue(state_))[0];
-
-  // ========== 6. 提取最后一个 token 的表示 ==========
-  // 对于自回归生成，通常只需要最后一个位置的隐藏状态
-  // 这样可以减少计算量，因为后续的 LM head 只需要预测下一个 token
-  // 输出形状: [B, 1, hidden_size]
   {
     auto S = sequence.shape()[1];
     sequence = sequence[{kAll, {S - 1}, kAll}];
   }
-
-  // ========== 7. 语言模型头投影 ==========
-  // 如果启用了词嵌入共享（tie_word_embeddings），将隐藏状态投影到词汇表大小
-  // 输出形状: [B, 1, vocab_size]
-  // 注意：如果未启用共享，则需要在外部调用 lm_head
   if (tie_word_embeddings_) { sequence = lm_head_(sequence); }
 
-  // ========== 8. 返回输出 ==========
-  // 返回更新后的序列表示和位置编码，供下一轮生成使用
   return {
       {"sequence", sequence},
       {"position_ids", position_ids},
