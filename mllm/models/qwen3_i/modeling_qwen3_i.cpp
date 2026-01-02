@@ -12,7 +12,6 @@
 #include <cmath>
 #include <nlohmann/json.hpp>
 
-
 namespace mllm::models::qwen3_i {
 
 /** Qwen3MLP Implementation **/
@@ -25,12 +24,12 @@ Qwen3MLP::Qwen3MLP(const std::string& name, const Qwen3Config& cfg) : nn::Module
 }
 
 std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-    auto x = gate_proj_(inputs[0]);
-    x = silu_(x);
-    auto y = up_proj_(inputs[0]);
-    x = x * y;
-    x = down_proj_(x);
-    return {x};
+  auto x = gate_proj_(inputs[0]);
+  x = silu_(x);
+  auto y = up_proj_(inputs[0]);
+  x = x * y;
+  x = down_proj_(x);
+  return {x};
 }
 
 /** Qwen3Decoder Implementation **/

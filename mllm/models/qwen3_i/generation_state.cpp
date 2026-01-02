@@ -36,6 +36,10 @@ void GenerationState::sync_cache() {
   // MLLM_INFO("GenerationState: Syncing cache");
 }
 
+void GenerationState::checkpoint() const {
+  
+}
+
 void GenerationState::update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v) {
   kv_cache_.updateKVCache(layer_idx, k, v);
 }
