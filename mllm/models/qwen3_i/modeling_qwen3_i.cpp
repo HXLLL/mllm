@@ -293,18 +293,19 @@ void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& 
     return next_token;
   };
 
-  ARGenerationOutputPast forward_input = input;
-  Tensor& input_sequence = forward_input["sequence"];
-
+  ARGenerationOutputPast prefill_input = input;
   prefillEventStartTimePoint();
-  int64_t next_token = do_forward(forward_input);
-  ar_prefill_tokens_ = input_sequence.shape()[1];
+  int64_t next_token = do_forward(prefill_input);
+  ar_prefill_tokens_ = prefill_input["sequence"].shape()[1];
   prefillEventEndTimePoint();
+
+  ARGenerationOutputPast decode_input = prefill_input;
 
   decodeEventStartTimePoint();
   for (int i = 0; i < max_length && next_token != eos_token_id; ++i, ++ar_steps_) {
-    input_sequence.at<mllm_int64_t>({0, 0}) = next_token;
-    next_token = do_forward(forward_input);
+    decode_input["sequence"] = Tensor::empty({1, 1}, kInt64, prefill_input["sequence"].device()).alloc();
+    decode_input["sequence"].at<mllm_int64_t>({0, 0}) = next_token;
+    next_token = do_forward(decode_input);
   }
   decodeEventEndTimePoint();
 }
