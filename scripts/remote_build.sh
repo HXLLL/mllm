@@ -19,7 +19,7 @@ time ssh g "source ~/.zshrc; cd /home/xiaolonghuang/mllm/ && CCACHE_SLOPPINESS=t
 echo Sync back build artifacts
 # time rsync -a ${PROGRESS_ARGS}  g:/home/xiaolonghuang/mllm/build/bin/  ./build/bin/
 # scp g:/home/xiaolonghuang/mllm/build/compile_commands.json ./build/compile_commands.json
-time rsync -a ${PROGRESS_ARGS} g:/home/xiaolonghuang/mllm/build/ ./build/
+time rsync -a --no-whole-file --partial ${PROGRESS_ARGS} g:/home/xiaolonghuang/mllm/build/ ./build/
 
 rm ./compile_commands.json
 sed -i 's/\/home\/xiaolonghuang\/mllm/\/home\/xiaolong\/mllm/g' ./build/compile_commands.json
