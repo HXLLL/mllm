@@ -8,24 +8,39 @@
 
 namespace mllm::models::qwen3_i {
 
-GenerationState::GenerationState(const std::filesystem::path& path, int max_length, int layer_nums, int q_heads, int kv_heads,
-                                 int kv_dim, int hidden_size)
-    : num_output_tokens_(0),
-      max_length_(max_length),
-      layer_nums_(layer_nums),
-      q_heads_(q_heads),
-      kv_heads_(kv_heads),
-      kv_dim_(kv_dim),
-      hidden_size_(hidden_size),
-      output_tokens_(Tensor::empty({max_length_, hidden_size_}, kFloat32, kCPU).alloc()),
-      path_(path) {
-  k_cache_.reserve(layer_nums_);
-  v_cache_.reserve(layer_nums_);
-  for (int i = 0; i < layer_nums_; ++i) {
-    k_cache_.emplace_back(Tensor::empty({q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
-    v_cache_.emplace_back(Tensor::empty({q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
-  }
+GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen3Config& cfg, const std::filesystem::path& path) {
+
+
+  return {
+      .path = path,
+      .max_length = cfg.max_cache_length,
+      .layer_nums = cfg.num_hidden_layers,
+      .q_heads = cfg.num_attention_heads,
+      .kv_heads = cfg.num_key_value_heads,
+      .kv_dim = cfg.head_dim,
+      .hidden_size = cfg.hidden_size,
+      .num_output_tokens = 0,
+      .input_tokens = {},
+      .output_tokens = {},
+      .k_cache = {},
+      .v_cache = {},
+  };
+
 }
+
+GenerationState::GenerationState(InitParams&& params)
+    : path_(params.path),
+      max_length_(params.max_length),
+      layer_nums_(params.layer_nums),
+      q_heads_(params.q_heads),
+      kv_heads_(params.kv_heads),
+      kv_dim_(params.kv_dim),
+      hidden_size_(params.hidden_size),
+      num_output_tokens_(params.num_output_tokens),
+      input_tokens_(std::move(params.input_tokens)),
+      output_tokens_(std::move(params.output_tokens)),
+      k_cache_(std::move(params.k_cache)),
+      v_cache_(std::move(params.v_cache)) {}
 
 GenerationState::ptr GenerationState::create_or_recover(const Qwen3Config& cfg, const std::filesystem::path& path) {
   if (std::filesystem::exists(path)) {
@@ -36,15 +51,24 @@ GenerationState::ptr GenerationState::create_or_recover(const Qwen3Config& cfg, 
 }
 
 GenerationState::ptr GenerationState::recover(const Qwen3Config& cfg, const std::filesystem::path& path) {
-  MLLM_INFO("GenerationState: Recovering state from {}", path.string());
-  return std::make_shared<GenerationState>(path, cfg.max_cache_length, cfg.num_hidden_layers, cfg.num_attention_heads,
-                                           cfg.num_key_value_heads, cfg.head_dim, cfg.hidden_size);
+  MLLM_ERROR_EXIT(-1, "not implemented");
+  return nullptr;
 }
 
 GenerationState::ptr GenerationState::create(const Qwen3Config& cfg, const std::filesystem::path& path) {
   MLLM_INFO("GenerationState: Creating state at {}", path.string());
-  return std::make_shared<GenerationState>(path, cfg.max_cache_length, cfg.num_hidden_layers, cfg.num_attention_heads,
-                                           cfg.num_key_value_heads, cfg.head_dim, cfg.hidden_size);
+  auto layer_nums = cfg.num_hidden_layers;
+
+  auto params = InitParams::make_default(cfg, path);
+  params.input_tokens = {};
+  params.output_tokens = Tensor::empty({cfg.max_cache_length, cfg.hidden_size}, kFloat32, kCPU).alloc();
+  params.k_cache.reserve(layer_nums);
+  params.v_cache.reserve(layer_nums);
+  for (int i = 0; i < layer_nums; ++i) {
+    params.k_cache.emplace_back(Tensor::empty({cfg.num_attention_heads, cfg.max_cache_length, cfg.head_dim}, kFloat32, kCPU).alloc());
+    params.v_cache.emplace_back(Tensor::empty({cfg.num_attention_heads, cfg.max_cache_length, cfg.head_dim}, kFloat32, kCPU).alloc());
+  }
+  return std::make_shared<GenerationState>(std::move(params));
 }
 
 void GenerationState::start_prefill(const Tensor& token_ids) {

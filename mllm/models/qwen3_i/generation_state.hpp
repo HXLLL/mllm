@@ -23,8 +23,24 @@ class GenerationState {
   using ptr = std::shared_ptr<GenerationState>;
   using Qwen3Config = models::qwen3::Qwen3Config;
 
-  GenerationState(const std::filesystem::path& path, int max_length, int layer_nums, int q_heads, int kv_heads, int kv_dim,
-                  int hidden_size);
+  struct InitParams {
+    std::filesystem::path path;
+    int max_length;
+    int layer_nums;
+    int q_heads;
+    int kv_heads;
+    int kv_dim;
+    int hidden_size;
+    int num_output_tokens;
+    std::vector<int64_t> input_tokens;
+    Tensor output_tokens;
+    std::vector<Tensor> k_cache;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
+    std::vector<Tensor> v_cache;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
+
+    static InitParams make_default(const Qwen3Config& cfg, const std::filesystem::path& path);
+  };
+
+  explicit GenerationState(InitParams&& params);
 
   static ptr create_or_recover(const Qwen3Config& cfg, const std::filesystem::path& path);
   static ptr recover(const Qwen3Config& cfg, const std::filesystem::path& path);
@@ -44,19 +60,18 @@ class GenerationState {
   void clear();
 
  private:
-  int num_output_tokens_;
+  std::filesystem::path path_;
+
   int max_length_;
   int layer_nums_;
   int q_heads_;
   int kv_heads_;
   int kv_dim_;
   int hidden_size_;
-
+  int num_output_tokens_;
 
   std::vector<int64_t> input_tokens_;
   Tensor output_tokens_;
-  std::filesystem::path path_;
-
   std::vector<Tensor> k_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
   std::vector<Tensor> v_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
 
