@@ -18,8 +18,14 @@ GenerationState::GenerationState(const std::filesystem::path& path, int max_leng
       kv_dim_(kv_dim),
       hidden_size_(hidden_size),
       output_tokens_(Tensor::empty({max_length_, hidden_size_}, kFloat32, kCPU).alloc()),
-      kv_cache_(max_length, layer_nums, q_heads, kv_heads, kv_dim, kFloat32, kFloat32, kCPU, false),
-      path_(path) {}
+      path_(path) {
+  k_cache_.reserve(layer_nums_);
+  v_cache_.reserve(layer_nums_);
+  for (int i = 0; i < layer_nums_; ++i) {
+    k_cache_.emplace_back(Tensor::empty({q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
+    v_cache_.emplace_back(Tensor::empty({q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
+  }
+}
 
 GenerationState::ptr GenerationState::create_or_recover(const Qwen3Config& cfg, const std::filesystem::path& path) {
   if (std::filesystem::exists(path)) {
@@ -41,9 +47,20 @@ GenerationState::ptr GenerationState::create(const Qwen3Config& cfg, const std::
                                            cfg.num_key_value_heads, cfg.head_dim, cfg.hidden_size);
 }
 
-void GenerationState::start_generation(const Tensor& token_ids) {
-  input_tokens_ = token_ids.toVector<int64_t>();
+void GenerationState::start_prefill(const Tensor& token_ids) {
+  MLLM_RT_ASSERT_EQ(token_ids.shape()[0], 1);
+  MLLM_RT_ASSERT_EQ(token_ids.dtype(), kInt64);
+  auto seq_len = token_ids.shape()[1];
+  for (int i = 0; i < seq_len; ++i) {
+    input_tokens_.push_back(*token_ids.cptrAt<int64_t>({0, i}));
+  }
   mllm::print(token_ids.shape());
+}
+
+void GenerationState::start_decode(const Tensor& token_id) {
+  MLLM_RT_ASSERT_EQ(token_id.shape()[0], 1);
+  MLLM_RT_ASSERT_EQ(token_id.shape()[1], 1);
+  MLLM_RT_ASSERT_EQ(token_id.dtype(), kInt64);
 }
 
 void GenerationState::append_output_token(const Tensor& token) {
@@ -82,21 +99,33 @@ void GenerationState::sync_cache() {
   // MLLM_INFO("GenerationState: Syncing cache");
 }
 
-void GenerationState::checkpoint() const {
-  
-}
-
 void GenerationState::update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v) {
-  kv_cache_.updateKVCache(layer_idx, k, v);
+  MLLM_RT_ASSERT_EQ(k.shape()[0], 1);
+  MLLM_RT_ASSERT_EQ(k.shape()[1], count);
+  MLLM_RT_ASSERT_EQ(k.shape()[2], q_heads_);
+  MLLM_RT_ASSERT_EQ(k.shape()[3], kv_dim_);
+  MLLM_RT_ASSERT_EQ(v.shape()[0], 1);
+  MLLM_RT_ASSERT_EQ(v.shape()[1], count);
+  MLLM_RT_ASSERT_EQ(v.shape()[2], q_heads_);
+  MLLM_RT_ASSERT_EQ(v.shape()[3], kv_dim_);
 }
 
 void GenerationState::update_h(int layer_idx, int offset, int count, const Tensor &h) {
+  MLLM_RT_ASSERT_EQ(h.shape()[0], 1);
+  MLLM_RT_ASSERT_EQ(h.shape()[1], count);
+  MLLM_RT_ASSERT_EQ(h.shape()[2], hidden_size_);
   // h_cache_.updateHiddenStateCache(layer_idx, offset, count, h);
 }
 
+std::array<Tensor, 2> GenerationState::get_kv(int layer_idx) {
+  MLLM_ERROR_EXIT(ExitCode::kCoreError, "to be implemented");
+  return { Tensor::nil(), Tensor::nil() };
+}
+
 std::optional<std::array<Tensor, 2>> GenerationState::get_kv(int layer_idx, int offset, int count) {
+  MLLM_ERROR_EXIT(ExitCode::kCoreError, "to be implemented");
   // MLLM_INFO("GenerationState: Getting KV cache for layer {}, token offset {}, token count {}", layer_idx, offset, count);
-  return {kv_cache_.getKVCache(layer_idx)};
+  return {};
 }
 
 }  // namespace mllm::models::qwen3_i

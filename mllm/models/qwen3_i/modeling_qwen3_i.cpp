@@ -7,6 +7,7 @@
 #include "mllm/nn/Functional.hpp"
 #include "mllm/nn/Module.hpp"
 #include "mllm/utils/AnyValue.hpp"
+#include "mllm/utils/Common.hpp"
 #include "mllm/utils/RoPE.hpp"
 #include <algorithm>
 #include <cmath>
@@ -179,12 +180,10 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
     const int chunk_end = std::min(chunk_start + chunksize_, seq_len_);
     int len = chunk_end - chunk_start;
 
-    // Embed and slice position encodings for this chunk
     auto x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
     auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
     auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
 
-    // Process through all decoder layers
     for (int j = 0; j < static_cast<int>(decode_blocks_.list().size()); j++) {
       recordEvent<LayerBeginEvent>(j, len, offset);
       auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
@@ -217,8 +216,6 @@ Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cf
   if (tie_word_embeddings_) {
     lm_head_ = reg<nn::Linear>("lm_head_out", cfg_.hidden_size, cfg_.vocab_size, false, cfg_.linear_impl_type);
   }
-
-  // Initialize RoPE inverse frequencies
   registerBuffer("inv_freq", makeRoPEInvFreq(cfg_.head_dim, cfg_.rope_theta));
 }
 
@@ -226,24 +223,19 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
                                                              const ARGenerationArgs& args) {
   auto sequence = input.at("sequence");
   auto batch_size = sequence.shape()[0];
-  assert(batch_size == 1);
+  MLLM_RT_ASSERT_EQ(batch_size, 1);
   auto seq_len = sequence.shape()[1];
 
-  Tensor position_ids = Tensor::nil();
+  Tensor position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
   if (input.count("position_ids")) { // decode phase
     position_ids = input.at("position_ids");
-    if (seq_len == 1) {
-      auto last_pos = *position_ids.offsettedPtr<int64_t>({0, position_ids.shape()[1] - 1});
-      position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
-      *position_ids.offsettedPtr<int64_t>({0, 0}) = last_pos + 1;
-    }
+    MLLM_RT_ASSERT_EQ(seq_len, 1);
+    auto last_pos = *position_ids.cptrAt<int64_t>({0, 0});
+    *position_ids.ptrAt<int64_t>({0, 0}) = last_pos + 1;
+    state_->start_decode(sequence);
   } else { // prefill phase
-    position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
-    auto position_ids_ptr = position_ids.ptr<int64_t>();
-    for (int b = 0; b < batch_size; ++b) {
-      for (int s = 0; s < seq_len; ++s) { position_ids_ptr[b * seq_len + s] = s; }
-    }
-    state_->start_generation(sequence);
+    for (int s = 0; s < seq_len; ++s) { *position_ids.ptrAt<int64_t>({0, s}) = s; }
+    state_->start_prefill(sequence);
   }
 
   auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);

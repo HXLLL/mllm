@@ -10,27 +10,12 @@
 
 namespace mllm::models::qwen3_i {
 
-class KVCache {
- public:
-  void checkpoint() const;
-  void update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v);
-  [[nodiscard]] std::array<Tensor, 2> get_kv(int layer_idx);
-  [[nodiscard]] std::array<Tensor, 2> get_kv(int layer_idx, int offset, int count);
- private:
-  DeviceTypes device_type_;
-  DataTypes k_dtype_;
-  DataTypes v_dtype_;
-  int32_t max_cache_length_;
-  int32_t layer_nums_;
-  int32_t q_heads_;
-  int32_t kv_heads_;
-  int32_t kv_dims_;
-
-  Tensor k_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
-  Tensor v_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
-
-  std::unordered_map<std::pair<int, int>, bool> dirty;
-  std::queue<std::pair<int, int>> dirty_queue;
+struct PairHash {
+  std::size_t operator()(const std::pair<int, int>& p) const noexcept {
+    uint64_t hi = static_cast<uint32_t>(p.first);
+    uint64_t lo = static_cast<uint32_t>(p.second);
+    return std::hash<uint64_t>{}((hi << 32) | lo);
+  }
 };
 
 class GenerationState {
@@ -45,14 +30,16 @@ class GenerationState {
   static ptr recover(const Qwen3Config& cfg, const std::filesystem::path& path);
   static ptr create(const Qwen3Config& cfg, const std::filesystem::path& path);
 
-  void start_generation(const Tensor& token_ids);
+  void start_prefill(const Tensor& token_ids);
+  void start_decode(const Tensor& token_id);
   void append_output_token(const Tensor& token);
 
   void save() const;
-  void checkpoint() const;
   void sync_cache();
+
   void update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v);
   void update_h(int layer_idx, int offset, int count, const Tensor &h);
+  [[nodiscard]] std::array<Tensor, 2>get_kv(int layer_idx);
   [[nodiscard]] std::optional<std::array<Tensor, 2>>get_kv(int layer_idx, int offset, int count);
   void clear();
 
@@ -68,8 +55,13 @@ class GenerationState {
 
   std::vector<int64_t> input_tokens_;
   Tensor output_tokens_;
-  nn::StaticCache kv_cache_;
   std::filesystem::path path_;
+
+  std::vector<Tensor> k_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
+  std::vector<Tensor> v_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
+
+  std::unordered_map<std::pair<int, int>, bool, PairHash> dirty;
+  std::queue<std::pair<int, int>> dirty_queue;
 };
 
 }  // namespace mllm::models::qwen3_i
