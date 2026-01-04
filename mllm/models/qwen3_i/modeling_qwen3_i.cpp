@@ -262,4 +262,51 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
   };
 }
 
+void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& input, const ARGenerationArgs& args,
+                                                  const std::function<void(int64_t)>& callback) {
+  float temperature = args.count("temperature") ? args.at("temperature").get<float>() : 1.0f;
+  int top_k = args.count("top_k") ? args.at("top_k").get<int>() : 0;
+  float top_p = args.count("top_p") ? args.at("top_p").get<float>() : 0.0f;
+  int max_length = args.count("max_length") ? args.at("max_length").get<int>() : max_length_;
+  int eos_token_id = args.count("eos_token_id") ? args.at("eos_token_id").get<int>() : eos_token_id_;
+  bool do_sample = args.count("do_sample") ? args.at("do_sample").get<bool>() : do_sample_;
+  bool use_sampling = do_sample || (temperature != 1.0f) || (top_k > 0) || (top_p > 0.0f);
+
+  auto predict_next_token = [&, this](Tensor& logits) {
+    if (use_sampling) {
+      if (top_k > 0) {
+        return sampleTopK(logits, top_k, temperature);
+      } else if (top_p > 0.0f) {
+        return sampleTopP(logits, top_p, temperature);
+      } else {
+        return sampleTemperature(logits, temperature);
+      }
+    } else {
+      return sampleGreedy(logits);
+    }
+  };
+
+  auto do_forward = [&, this](ARGenerationOutputPast& past) {
+    past = forward(past, args);
+    int64_t next_token = predict_next_token(past["sequence"]);
+    callback(next_token);
+    return next_token;
+  };
+
+  ARGenerationOutputPast forward_input = input;
+  Tensor& input_sequence = forward_input["sequence"];
+
+  prefillEventStartTimePoint();
+  int64_t next_token = do_forward(forward_input);
+  ar_prefill_tokens_ = input_sequence.shape()[1];
+  prefillEventEndTimePoint();
+
+  decodeEventStartTimePoint();
+  for (int i = 0; i < max_length && next_token != eos_token_id; ++i, ++ar_steps_) {
+    input_sequence.at<mllm_int64_t>({0, 0}) = next_token;
+    next_token = do_forward(forward_input);
+  }
+  decodeEventEndTimePoint();
+}
+
 }  // namespace mllm::models::qwen3_i
