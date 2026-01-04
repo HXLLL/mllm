@@ -230,19 +230,20 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
   auto seq_len = sequence.shape()[1];
 
   Tensor position_ids = Tensor::nil();
-  if (input.count("position_ids")) {
+  if (input.count("position_ids")) { // decode phase
     position_ids = input.at("position_ids");
     if (seq_len == 1) {
       auto last_pos = *position_ids.offsettedPtr<int64_t>({0, position_ids.shape()[1] - 1});
       position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
       *position_ids.offsettedPtr<int64_t>({0, 0}) = last_pos + 1;
     }
-  } else {
+  } else { // prefill phase
     position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
     auto position_ids_ptr = position_ids.ptr<int64_t>();
     for (int b = 0; b < batch_size; ++b) {
       for (int s = 0; s < seq_len; ++s) { position_ids_ptr[b * seq_len + s] = s; }
     }
+    state_->start_generation(sequence);
   }
 
   auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);

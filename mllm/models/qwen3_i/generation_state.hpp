@@ -44,6 +44,8 @@ class GenerationState {
   static ptr recover(const Qwen3Config& cfg, const std::filesystem::path& path);
   static ptr create(const Qwen3Config& cfg, const std::filesystem::path& path);
 
+  void start_generation(const Tensor& token_ids);
+
   void save() const;
   void checkpoint() const;
   void sync_cache();
@@ -53,6 +55,7 @@ class GenerationState {
   void clear();
 
  private:
+  Tensor input_tokens_;
   nn::StaticCache kv_cache_;
   std::filesystem::path path_;
 };

@@ -31,6 +31,20 @@ GenerationState::ptr GenerationState::create(const Qwen3Config& cfg, const std::
   return std::make_shared<GenerationState>(path, cfg.max_cache_length, cfg.num_hidden_layers, cfg.num_attention_heads, cfg.num_key_value_heads, cfg.head_dim);
 }
 
+void GenerationState::start_generation(const Tensor& token_ids) {
+  input_tokens_ = token_ids.clone();
+}
+
+
+
+
+
+
+
+
+
+
+
 
 void GenerationState::sync_cache() {
   // MLLM_INFO("GenerationState: Syncing cache");
