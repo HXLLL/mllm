@@ -1,3 +1,5 @@
+#include <fstream>
+#include <filesystem>
 #include <nlohmann/json.hpp>
 
 #include "mllm/models/qwen3_i/generation_state.hpp"
@@ -7,11 +9,6 @@ namespace mllm::models::qwen3_i {
 GenerationState::GenerationState(const std::filesystem::path& path, int max_length, int layer_nums, int q_heads, int kv_heads,
                                  int kv_dim)
     : path_(path), kv_cache_(max_length, layer_nums, q_heads, kv_heads, kv_dim, kFloat32, kFloat32, kCPU, false) {}
-
-void GenerationState::save() const {
-  MLLM_INFO("GenerationState: Saving state to {}", path_.string());
-}
-
 
 GenerationState::ptr GenerationState::create_or_recover(const Qwen3Config& cfg, const std::filesystem::path& path) {
   if (std::filesystem::exists(path)) {
@@ -33,7 +30,24 @@ GenerationState::ptr GenerationState::create(const Qwen3Config& cfg, const std::
 
 void GenerationState::start_generation(const Tensor& token_ids) {
   input_tokens_ = token_ids.clone();
+  mllm::print(token_ids.shape());
 }
+
+void GenerationState::save() const {
+  std::vector<int64_t> token_ids = input_tokens_.toVector<int64_t>();
+  nlohmann::json json_data;
+  json_data["input_tokens"] = token_ids;
+  std::filesystem::path json_path = path_ / "metadata.json";
+  std::ofstream out_file(json_path);
+  if (!out_file.is_open()) {
+    MLLM_ERROR("GenerationState: Failed to open file for writing: {}", json_path.string());
+    return;
+  }
+  out_file << json_data.dump(2);
+  out_file.close();
+}
+
+
 
 
 
