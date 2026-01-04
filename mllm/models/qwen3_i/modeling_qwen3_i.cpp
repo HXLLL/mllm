@@ -250,7 +250,9 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
   sequence = llm_(sequence, llm_embedding_sin, llm_embedding_cos, position_ids, AnyValue(state_))[0];
   {
     auto S = sequence.shape()[1];
+    auto D = sequence.shape()[2];
     sequence = sequence[{kAll, {S - 1}, kAll}];
+    state_->append_output_token(sequence);
   }
   if (tie_word_embeddings_) { sequence = lm_head_(sequence); }
 
