@@ -38,7 +38,7 @@ GenerationState::GenerationState(const Qwen3Config& cfg, const fs::path& path)
       prefill_done_(false) {}
 
 void GenerationState::load() {
-  MLLM_INFO("GenerationState: Recovering state from {}", path_.string());
+  MLLM_INFO("GenerationState: Loading state from {}", path_.string());
 
   auto metadata_file = open_ifstream(path_ / "metadata.json");
   nlohmann::json json_data;

@@ -39,28 +39,24 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, Gene
     : nn::Module(name),
       layer_idx_(idx),
       hidden_size_(cfg.hidden_size),
+      head_dim_(cfg.head_dim),
       num_attention_heads_(cfg.num_attention_heads),
       num_key_value_heads_(cfg.num_key_value_heads),
-      head_dim_(cfg.head_dim),
-      num_key_value_groups_(num_attention_heads_ / num_key_value_heads_),
-      state_(state) {
-  // attention
-  q_proj_ = reg<nn::Linear>("self_attn.q_proj", hidden_size_, head_dim_ * num_attention_heads_, cfg.attention_bias, cfg.linear_impl_type);
-  k_proj_ = reg<nn::Linear>("self_attn.k_proj", hidden_size_, head_dim_ * num_key_value_heads_, cfg.attention_bias, cfg.linear_impl_type);
-  v_proj_ = reg<nn::Linear>("self_attn.v_proj", hidden_size_, head_dim_ * num_key_value_heads_, cfg.attention_bias, cfg.linear_impl_type);
-  o_proj_ = reg<nn::Linear>("self_attn.o_proj", head_dim_ * num_attention_heads_, hidden_size_, cfg.attention_bias, cfg.linear_impl_type);
-  rms_norm_q_ = reg<nn::RMSNorm>("self_attn.q_norm", cfg.rms_norm_eps);
-  rms_norm_k_ = reg<nn::RMSNorm>("self_attn.k_norm", cfg.rms_norm_eps);
-  q_rope_ = reg<nn::RoPE>("self_attn.q_rope", cfg.rope_theta, cfg.max_position_embeddings);
-  k_rope_ = reg<nn::RoPE>("self_attn.k_rope", cfg.rope_theta, cfg.max_position_embeddings);
-  mask_ = reg<nn::CausalMask>("self_attn.mask");
-  softmax_ = reg<nn::Softmax>("self_attn.softmax", -1);
-
-  // MLP
-  mlp_ = reg<Qwen3MLP>("mlp", cfg);
-  input_layer_norm_ = reg<nn::RMSNorm>("input_layernorm", cfg.rms_norm_eps);
-  post_attention_layer_norm_ = reg<nn::RMSNorm>("post_attention_layernorm", cfg.rms_norm_eps);
-}
+      num_key_value_groups_(cfg.num_attention_heads / cfg.num_key_value_heads),
+      q_proj_(reg<nn::Linear>("self_attn.q_proj", cfg.hidden_size, cfg.head_dim * cfg.num_attention_heads, cfg.attention_bias, cfg.linear_impl_type)),
+      k_proj_(reg<nn::Linear>("self_attn.k_proj", cfg.hidden_size, cfg.head_dim * cfg.num_key_value_heads, cfg.attention_bias, cfg.linear_impl_type)),
+      v_proj_(reg<nn::Linear>("self_attn.v_proj", cfg.hidden_size, cfg.head_dim * cfg.num_key_value_heads, cfg.attention_bias, cfg.linear_impl_type)),
+      o_proj_(reg<nn::Linear>("self_attn.o_proj", cfg.head_dim * cfg.num_attention_heads, cfg.hidden_size, cfg.attention_bias, cfg.linear_impl_type)),
+      rms_norm_q_(reg<nn::RMSNorm>("self_attn.q_norm", cfg.rms_norm_eps)),
+      rms_norm_k_(reg<nn::RMSNorm>("self_attn.k_norm", cfg.rms_norm_eps)),
+      q_rope_(reg<nn::RoPE>("self_attn.q_rope", cfg.rope_theta, cfg.max_position_embeddings)),
+      k_rope_(reg<nn::RoPE>("self_attn.k_rope", cfg.rope_theta, cfg.max_position_embeddings)),
+      mask_(reg<nn::CausalMask>("self_attn.mask")),
+      softmax_(reg<nn::Softmax>("self_attn.softmax", -1)),
+      mlp_(reg<Qwen3MLP>("mlp", cfg)),
+      input_layer_norm_(reg<nn::RMSNorm>("input_layernorm", cfg.rms_norm_eps)),
+      post_attention_layer_norm_(reg<nn::RMSNorm>("post_attention_layernorm", cfg.rms_norm_eps)),
+      state_(state) {}
 
 std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) { return {}; }
 
