@@ -39,12 +39,14 @@ class GenerationState {
 
   void updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v);
   [[nodiscard]] std::array<Tensor, 2> getKV(int layer_idx);
-  [[nodiscard]] std::array<Tensor, 2> get_kv(int layer_idx, int offset, int count);
+  [[nodiscard]] std::array<Tensor, 2> getKV(int layer_idx, int offset, int count);
 
   void updateH(int layer_idx, int offset, int count, const Tensor& h);
   Tensor getH(int layer_idx, int offset, int count);
 
  private:
+  const size_t ELEMENT_SIZE = bytesOfType(kFloat32) / lanesOfType(kFloat32);
+
   std::filesystem::path path_;
 
   int max_length_;
@@ -53,9 +55,9 @@ class GenerationState {
   int kv_heads_;
   int kv_dim_;
   int hidden_size_;
-  int num_output_tokens_;
-  int prefill_done_;
-  int started_;
+  int num_output_tokens_ = 0;
+  int prefill_done_ = 0;
+  int started_ = 0;
 
   std::vector<int64_t> input_tokens_;
   Tensor output_tokens_;
