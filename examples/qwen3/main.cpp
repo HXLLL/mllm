@@ -38,6 +38,7 @@ class Qwen3Service {
       fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
     } else {
       state_.create();
+      fmt::print("Generation state created\n");
     }
     model_ = std::make_unique<Model>(qwen3_cfg_, state_, config_.chunk_size);
 
@@ -56,13 +57,20 @@ class Qwen3Service {
 
     fmt::print("💬 Prompt text (or 'exit/quit'): ");
 
-    std::getline(std::cin, prompt_text);
-    fmt::print("🔄 Processing...\n");
-    inputs = qwen3_tokenizer_.convertMessage({.prompt = prompt_text});
-    fmt::print("\n🤖 Response: ");
+    if (state_.hasStarted()) {
+      auto old_input = state_.getInputTokens();
+      inputs["sequence"] = buildSequenceFromIds(old_input);
+      fmt::print("[Resuming] ");
+      replayTokens(old_input);
+    } else {
+      fmt::print("🔄 Starting generation...\n");
+      std::getline(std::cin, prompt_text);
+      inputs = qwen3_tokenizer_.convertMessage({.prompt = prompt_text});
+      state_.start(inputs["sequence"]);
+    }
 
-    auto callback = [&](int64_t token_id) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; };
-    model_->streamGenerate(inputs, {}, callback);
+    model_->streamGenerate(inputs, {},
+                           [&](int64_t token_id) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; });
 
     fmt::print("\n{}\n", std::string(60, '-'));
 
@@ -71,12 +79,10 @@ class Qwen3Service {
 
  private:
   mllm::Tensor buildSequenceFromIds(const std::vector<int64_t>& ids) {
-    mllm::Tensor sequence = mllm::Tensor::empty({1, static_cast<int32_t>(ids.size())}, mllm::kInt64, mllm::kCPU)
-                          .setMemType(mllm::kNormal)
-                          .setName("qwen3-resume-sequence")
-                          .alloc();
+    int seq_len = ids.size();
+    mllm::Tensor sequence = mllm::Tensor::empty({1, seq_len}, mllm::kInt64, mllm::kCPU).alloc();
     auto* ptr = sequence.ptr<int64_t>();
-    for (size_t i = 0; i < ids.size(); ++i) { ptr[i] = ids[i]; }
+    for (int i = 0; i < seq_len; ++i) { ptr[i] = ids[i]; }
     return sequence;
   };
 
