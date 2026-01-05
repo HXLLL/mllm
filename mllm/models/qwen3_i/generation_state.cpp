@@ -9,8 +9,6 @@
 namespace mllm::models::qwen3_i {
 
 GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen3Config& cfg, const std::filesystem::path& path) {
-
-
   return {
       .path = path,
       .max_length = cfg.max_cache_length,
@@ -25,7 +23,6 @@ GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen
       .k_cache = {},
       .v_cache = {},
   };
-
 }
 
 GenerationState::GenerationState(InitParams&& params)
@@ -78,7 +75,6 @@ void GenerationState::start_prefill(const Tensor& token_ids) {
   for (int i = 0; i < seq_len; ++i) {
     input_tokens_.push_back(*token_ids.cptrAt<int64_t>({0, i}));
   }
-  mllm::print(token_ids.shape());
 }
 
 void GenerationState::start_decode(const Tensor& token_id) {
@@ -125,13 +121,26 @@ void GenerationState::sync_cache() {
 
 void GenerationState::update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v) {
   MLLM_RT_ASSERT_EQ(k.shape()[0], 1);
-  MLLM_RT_ASSERT_EQ(k.shape()[1], count);
-  MLLM_RT_ASSERT_EQ(k.shape()[2], q_heads_);
+  MLLM_RT_ASSERT_EQ(k.shape()[1], kv_heads_);
+  MLLM_RT_ASSERT_EQ(k.shape()[2], count);
   MLLM_RT_ASSERT_EQ(k.shape()[3], kv_dim_);
   MLLM_RT_ASSERT_EQ(v.shape()[0], 1);
-  MLLM_RT_ASSERT_EQ(v.shape()[1], count);
-  MLLM_RT_ASSERT_EQ(v.shape()[2], q_heads_);
+  MLLM_RT_ASSERT_EQ(v.shape()[1], kv_heads_);
+  MLLM_RT_ASSERT_EQ(v.shape()[2], count);
   MLLM_RT_ASSERT_EQ(v.shape()[3], kv_dim_);
+
+  auto repeat_times = q_heads_ / kv_heads_;
+
+  for (int h = 0; h < kv_heads_; ++h) {
+    auto k_ptr = k.cptrAt<mllm_byte_t>({0, h, 0, 0});
+    auto v_ptr = v.cptrAt<mllm_byte_t>({0, h, 0, 0});
+    for (int r = 0; r < repeat_times; ++r) {
+      auto k_cache_ptr = k_cache_[layer_idx].ptrAt<mllm_byte_t>({h * repeat_times + r, offset, 0});
+      auto v_cache_ptr = v_cache_[layer_idx].ptrAt<mllm_byte_t>({h * repeat_times + r, offset, 0});
+      std::memcpy(k_cache_ptr, k_ptr, count * kv_dim_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
+      std::memcpy(v_cache_ptr, v_ptr, count * kv_dim_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
+    }
+  }
 }
 
 void GenerationState::update_h(int layer_idx, int offset, int count, const Tensor &h) {
@@ -143,13 +152,14 @@ void GenerationState::update_h(int layer_idx, int offset, int count, const Tenso
 
 std::array<Tensor, 2> GenerationState::get_kv(int layer_idx) {
   MLLM_ERROR_EXIT(ExitCode::kCoreError, "to be implemented");
-  return { Tensor::nil(), Tensor::nil() };
+  return { k_cache_[layer_idx], v_cache_[layer_idx] };
 }
 
-std::optional<std::array<Tensor, 2>> GenerationState::get_kv(int layer_idx, int offset, int count) {
-  MLLM_ERROR_EXIT(ExitCode::kCoreError, "to be implemented");
-  // MLLM_INFO("GenerationState: Getting KV cache for layer {}, token offset {}, token count {}", layer_idx, offset, count);
-  return {};
+std::array<Tensor, 2> GenerationState::get_kv(int layer_idx, int offset, int count) {
+  return {{
+    k_cache_[layer_idx][{kAll, {offset, offset + count}, kAll}],
+    v_cache_[layer_idx][{kAll, {offset, offset + count}, kAll}],
+  }};
 }
 
 }  // namespace mllm::models::qwen3_i

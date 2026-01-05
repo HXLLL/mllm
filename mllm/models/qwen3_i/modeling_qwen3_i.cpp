@@ -44,7 +44,7 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, Gene
       head_dim_(cfg.head_dim),
       num_key_value_groups_(num_attention_heads_ / num_key_value_heads_),
       state_(state) {
-  // Register attention components
+  // attention
   q_proj_ = reg<nn::Linear>("self_attn.q_proj", hidden_size_, head_dim_ * num_attention_heads_, cfg.attention_bias, cfg.linear_impl_type);
   k_proj_ = reg<nn::Linear>("self_attn.k_proj", hidden_size_, head_dim_ * num_key_value_heads_, cfg.attention_bias, cfg.linear_impl_type);
   v_proj_ = reg<nn::Linear>("self_attn.v_proj", hidden_size_, head_dim_ * num_key_value_heads_, cfg.attention_bias, cfg.linear_impl_type);
@@ -56,7 +56,7 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, Gene
   mask_ = reg<nn::CausalMask>("self_attn.mask");
   softmax_ = reg<nn::Softmax>("self_attn.softmax", -1);
 
-  // Register MLP and layer norms
+  // MLP
   mlp_ = reg<Qwen3MLP>("mlp", cfg);
   input_layer_norm_ = reg<nn::RMSNorm>("input_layernorm", cfg.rms_norm_eps);
   post_attention_layer_norm_ = reg<nn::RMSNorm>("post_attention_layernorm", cfg.rms_norm_eps);
@@ -131,7 +131,7 @@ std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::
   const int offset = args[0].get<int>();
   const int count = hidden_states.shape()[1];
 
-  auto [cached_key, cached_value] = *state_.get_kv(layer_idx_, 0, offset + count);
+  auto [cached_key, cached_value] = state_.get_kv(layer_idx_, 0, offset + count);
 
   // Compute attention scores with scaling
   const float scale = 1.f / sqrtf(static_cast<float>(head_dim_));
@@ -175,7 +175,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 
   // Chunked prefill
   int offset = *position_ids.cptrAt<int64_t>({0, 0});
-  for (int i = 0; i < num_chunks_; i++) {
+  for (int i = 0; i < num_chunks_; ++i) {
     const int chunk_start = i * chunksize_;
     const int chunk_end = std::min(chunk_start + chunksize_, seq_len_);
     int len = chunk_end - chunk_start;
@@ -184,7 +184,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
     auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
     auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
 
-    for (int j = 0; j < static_cast<int>(decode_blocks_.list().size()); j++) {
+    for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
       recordEvent<LayerBeginEvent>(j, len, offset);
       auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
       auto &h = h2kv_result[0];
@@ -198,7 +198,6 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 
     chunk_outputs.push_back(x);
     offset += len;
-    state_.sync_cache(); // TODO: FIX THIS
   }
 
   auto output = nn::functional::concat(chunk_outputs, 1);
@@ -230,7 +229,8 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
   if (input.count("position_ids")) { // decode phase
     position_ids = input.at("position_ids");
     MLLM_RT_ASSERT_EQ(seq_len, 1);
-    auto last_pos = *position_ids.cptrAt<int64_t>({0, 0});
+    auto last_pos = *position_ids.cptrAt<int64_t>({0, position_ids.shape()[1] - 1});
+    position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
     *position_ids.ptrAt<int64_t>({0, 0}) = last_pos + 1;
     state_->start_decode(sequence);
   } else { // prefill phase
@@ -292,7 +292,6 @@ void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& 
   prefillEventEndTimePoint();
 
   ARGenerationOutputPast decode_input = prefill_input;
-
   decodeEventStartTimePoint();
   for (int i = 0; i < max_length && next_token != eos_token_id; ++i, ++ar_steps_) {
     decode_input["sequence"] = Tensor::empty({1, 1}, kInt64, prefill_input["sequence"].device()).alloc();
