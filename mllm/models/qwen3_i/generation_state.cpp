@@ -54,13 +54,13 @@ void GenerationState::load() {
     for (int i = 0; i < layer_nums_; ++i) {
       k_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
       auto k_ptr = k_cache_[i].ptrAt<char>({0, 0, 0, 0});
-      kv_cache_file.read(k_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+      kv_cache_file.read(k_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
     }
     v_cache_.reserve(layer_nums_);
     for (int i = 0; i < layer_nums_; ++i) {
       v_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
       auto v_ptr = v_cache_[i].ptrAt<char>({0, 0, 0, 0});
-      kv_cache_file.read(v_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+      kv_cache_file.read(v_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
     }
   }
 
@@ -116,11 +116,11 @@ void GenerationState::save() const {
     auto kv_cache_file = open_ofstream(path_ / "kv_cache.bin", std::ios::binary);
     for (int i = 0; i < layer_nums_; ++i) {
       auto k_ptr = k_cache_[i].cptrAt<char>({0, 0, 0, 0});
-      kv_cache_file.write(k_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+      kv_cache_file.write(k_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
     }
     for (int i = 0; i < layer_nums_; ++i) {
       auto v_ptr = v_cache_[i].cptrAt<char>({0, 0, 0, 0});
-      kv_cache_file.write(v_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+      kv_cache_file.write(v_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
     }
   }
 }

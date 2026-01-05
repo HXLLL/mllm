@@ -164,7 +164,8 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 
 Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb) {
   auto seq_len = token_ids.shape()[1];
-  if (state_.prefill_done()) { return norm_(state_.getH(0, 0, seq_len)); }
+  auto layer_nums = decode_blocks_.list().size();
+  if (state_.prefill_done()) { return norm_(state_.getH(layer_nums, 0, seq_len)); }
 
   int64_t offset = 0;
   auto num_chunks = (seq_len + chunk_size_ - 1) / chunk_size_;
