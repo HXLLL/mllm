@@ -24,6 +24,7 @@ class GenerationState {
 
   void load();
   void create();
+  void save() const;
 
   void start(const Tensor& token_ids);
   [[nodiscard]] int hasStarted() const;
@@ -34,7 +35,7 @@ class GenerationState {
   void set_prefill_done();
   [[nodiscard]] int prefill_done() const;
 
-  void save() const;
+  [[nodiscard]] const std::vector<int64_t>& getInputTokens() const;
 
   void updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v);
   [[nodiscard]] std::array<Tensor, 2> getKV(int layer_idx);

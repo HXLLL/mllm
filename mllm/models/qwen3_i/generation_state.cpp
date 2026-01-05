@@ -102,33 +102,6 @@ void GenerationState::create() {
   save();
 }
 
-void GenerationState::start(const Tensor& token_ids) {
-  MLLM_RT_ASSERT(token_ids.shape()[0] == 1 && token_ids.dtype() == kInt64);
-  auto seq_len = token_ids.shape()[1];
-  for (int i = 0; i < seq_len; ++i) { input_tokens_.push_back(*token_ids.cptrAt<int64_t>({0, i})); }
-  started_ = 1;
-}
-
-int GenerationState::hasStarted() const {
-  return started_;
-}
-
-void GenerationState::start_decode(const Tensor& token_id) {
-  MLLM_RT_ASSERT(token_id.shape() == std::vector<int32_t>({1, 1}) && token_id.dtype() == kInt64);
-}
-
-int GenerationState::prefill_done() const { return prefill_done_; }
-
-void GenerationState::set_prefill_done() { prefill_done_ = 1; }
-
-void GenerationState::appendOutputToken(const Tensor& token) {
-  MLLM_RT_ASSERT(token.shape() == std::vector<int32_t>({1, 1, hidden_size_}) && token.dtype() == kFloat32);
-  auto src = token.cptrAt<float_t>({0, 0, 0});
-  auto dst = output_tokens_.ptrAt<float_t>({num_output_tokens_, 0});
-  std::memcpy(dst, src, hidden_size_ * sizeof(float_t));
-  num_output_tokens_++;
-}
-
 void GenerationState::save() const {
   if (!fs::exists(path_)) {
     fs::create_directories(path_);  // 递归创建
@@ -172,6 +145,33 @@ void GenerationState::save() const {
   }
   kv_cache_file.close();
 }
+
+void GenerationState::start(const Tensor& token_ids) {
+  MLLM_RT_ASSERT(token_ids.shape()[0] == 1 && token_ids.dtype() == kInt64);
+  auto seq_len = token_ids.shape()[1];
+  for (int i = 0; i < seq_len; ++i) { input_tokens_.push_back(*token_ids.cptrAt<int64_t>({0, i})); }
+  started_ = 1;
+}
+
+int GenerationState::hasStarted() const { return started_; }
+
+void GenerationState::start_decode(const Tensor& token_id) {
+  MLLM_RT_ASSERT(token_id.shape() == std::vector<int32_t>({1, 1}) && token_id.dtype() == kInt64);
+}
+
+void GenerationState::appendOutputToken(const Tensor& token) {
+  MLLM_RT_ASSERT(token.shape() == std::vector<int32_t>({1, 1, hidden_size_}) && token.dtype() == kFloat32);
+  auto src = token.cptrAt<float_t>({0, 0, 0});
+  auto dst = output_tokens_.ptrAt<float_t>({num_output_tokens_, 0});
+  std::memcpy(dst, src, hidden_size_ * sizeof(float_t));
+  num_output_tokens_++;
+}
+
+void GenerationState::set_prefill_done() { prefill_done_ = 1; }
+
+int GenerationState::prefill_done() const { return prefill_done_; }
+
+const std::vector<int64_t>& GenerationState::getInputTokens() const { return input_tokens_; }
 
 void GenerationState::updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v) {
   MLLM_RT_ASSERT(k.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
