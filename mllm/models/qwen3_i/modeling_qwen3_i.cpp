@@ -183,6 +183,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   std::vector<Tensor> chunk_outputs;
   chunk_outputs.reserve(num_chunks);
 
+  MLLM_INFO("Prefilling [{} / {}]", offset, seq_len);
   for (int i = 0; i < num_chunks; ++i) {
     const int chunk_start = i * chunksize_;
     const int chunk_end = std::min(chunk_start + chunksize_, seq_len);
@@ -210,6 +211,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
     state_.save();
     chunk_outputs.push_back(x);
     offset += len;
+    MLLM_INFO("Prefilling [{} / {}]", offset, seq_len);
   }
   auto output = nn::functional::concat(chunk_outputs, 1);
 
