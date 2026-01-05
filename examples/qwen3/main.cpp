@@ -52,7 +52,6 @@ class Qwen3Service {
     fmt::print("\n{:*^60}\n", " Qwen3 Interactive CLI ");
     fmt::print("Enter 'exit' or 'quit' to end the session\n\n");
 
-    std::string prompt_text;
     mllm::models::ARGenerationOutputPast inputs;
 
     fmt::print("💬 Prompt text (or 'exit/quit'): ");
@@ -63,6 +62,7 @@ class Qwen3Service {
       fmt::print("[Resuming] ");
       replayTokens(old_input);
     } else {
+      std::string prompt_text;
       fmt::print("🔄 Starting generation...\n");
       std::getline(std::cin, prompt_text);
       inputs = qwen3_tokenizer_.convertMessage({.prompt = prompt_text});
@@ -105,6 +105,7 @@ MLLM_MAIN({
   auto& config_path = Argparse::add<std::string>("-c|--config_path").help("Config path").required(true);
   auto& cache_dir = Argparse::add<std::string>("-cd|--cache_dir").help("Cache directory").required(true);
   auto& chunk_size = Argparse::add<int32_t>("-cs|--chunk_size").help("Chunk size").def(32);
+  auto& use_mmap = Argparse::add<bool>("-um|--use_mmap").help("Use mmap").def(false);
   Argparse::parse(argc, argv);
 
   if (help.isSet()) {
@@ -125,6 +126,7 @@ MLLM_MAIN({
       .state_path = std::filesystem::path(cache_dir.get()),
       .file_version = model_version.get() == "v2" ? mllm::ModelFileVersion::kV2 : mllm::ModelFileVersion::kV1,
       .chunk_size = chunk_size.get(),
+      .use_mmap = use_mmap.get(),
     });
     qwen3_service.load();
     qwen3_service.run();
