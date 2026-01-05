@@ -35,7 +35,8 @@ GenerationState::GenerationState(const Qwen3Config& cfg, const fs::path& path)
       kv_dim_(cfg.head_dim),
       hidden_size_(cfg.hidden_size),
       num_output_tokens_(0),
-      prefill_done_(false) {}
+      prefill_done_(0),
+      started_(0) {}
 
 void GenerationState::load() {
   MLLM_INFO("GenerationState: Loading state from {}", path_.string());
