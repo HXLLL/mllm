@@ -14,6 +14,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wreorder>)
+
+
 # MLLM Framework related
 option(MLLM_ENABLE_TEST "Enable MLLM test" ON)
 option(MLLM_ENABLE_BENCHMARK "Enable MLLM benchmark" ON)

@@ -67,7 +67,13 @@ std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, con
 /** Layer Tasks Implementation */
 
 H2KV::H2KV(Qwen3Decoder& decoder, GenerationState& state)
-    : input_layer_norm_(decoder.input_layer_norm_),
+    : layer_idx_(decoder.layer_idx_),
+      hidden_size_(decoder.hidden_size_),
+      head_dim_(decoder.head_dim_),
+      num_attention_heads_(decoder.num_attention_heads_),
+      num_key_value_heads_(decoder.num_key_value_heads_),
+      num_key_value_groups_(decoder.num_key_value_groups_),
+      input_layer_norm_(decoder.input_layer_norm_),
       q_proj_(decoder.q_proj_),
       k_proj_(decoder.k_proj_),
       v_proj_(decoder.v_proj_),
@@ -75,12 +81,6 @@ H2KV::H2KV(Qwen3Decoder& decoder, GenerationState& state)
       rms_norm_k_(decoder.rms_norm_k_),
       q_rope_(decoder.q_rope_),
       k_rope_(decoder.k_rope_),
-      layer_idx_(decoder.layer_idx_),
-      hidden_size_(decoder.hidden_size_),
-      head_dim_(decoder.head_dim_),
-      num_attention_heads_(decoder.num_attention_heads_),
-      num_key_value_heads_(decoder.num_key_value_heads_),
-      num_key_value_groups_(decoder.num_key_value_groups_),
       state_(state) {}
 
 std::vector<Tensor> H2KV::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
@@ -111,14 +111,14 @@ std::vector<Tensor> H2KV::forward(const std::vector<Tensor>& inputs, const std::
 }
 
 KV2H::KV2H(Qwen3Decoder& decoder, GenerationState& state)
-    : o_proj_(decoder.o_proj_),
+    : layer_idx_(decoder.layer_idx_),
+      head_dim_(decoder.head_dim_),
+      num_attention_heads_(decoder.num_attention_heads_),
+      o_proj_(decoder.o_proj_),
       mask_(decoder.mask_),
       softmax_(decoder.softmax_),
       mlp_(decoder.mlp_),
       post_attention_layer_norm_(decoder.post_attention_layer_norm_),
-      layer_idx_(decoder.layer_idx_),
-      head_dim_(decoder.head_dim_),
-      num_attention_heads_(decoder.num_attention_heads_),
       state_(state) {}
 
 std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
