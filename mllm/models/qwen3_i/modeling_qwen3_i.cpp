@@ -208,7 +208,6 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
 
 Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx) {
   MLLM_RT_ASSERT_EQ(token_ids.shape()[1], 1);
-  MLLM_INFO("Decoding, token_idx: {}", token_idx);
   auto x = embedding_(token_ids);
   for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
     recordEvent<LayerBeginEvent>(j, 1, token_idx);
@@ -259,7 +258,6 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
   } else {  // prefill phase
     position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
     for (int s = 0; s < seq_len; ++s) { *position_ids.ptrAt<int64_t>({0, s}) = s; }
-    state_.start(sequence);
   }
 
   auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);

@@ -38,21 +38,7 @@ GenerationState::GenerationState(const Qwen3Config& cfg, const fs::path& path)
 void GenerationState::load() {
   MLLM_INFO("GenerationState: Loading state from {}", path_.string());
 
-  nlohmann::json json_data;
-  {
-    auto metadata_file = open_ifstream(path_ / "metadata.json");
-    metadata_file >> json_data;
-  }
-
-  num_output_tokens_ = json_data.at("num_output_tokens");
-  max_length_ = json_data.at("max_length");
-  layer_nums_ = json_data.at("layer_nums");
-  q_heads_ = json_data.at("q_heads");
-  kv_heads_ = json_data.at("kv_heads");
-  kv_dim_ = json_data.at("kv_dim");
-  hidden_size_ = json_data.at("hidden_size");
-  prefill_done_ = json_data.at("prefill_done");
-  input_tokens_ = json_data.at("input_tokens").get<std::vector<int64_t>>();
+  loadMetadata();
 
   output_tokens_ = Tensor::empty({max_length_, hidden_size_}, kFloat32, kCPU).alloc();
   {
@@ -110,21 +96,7 @@ void GenerationState::save() const {
     fs::create_directories(path_);
   }
 
-  nlohmann::json json_data;
-  json_data["num_output_tokens"] = num_output_tokens_;
-  json_data["max_length"] = max_length_;
-  json_data["layer_nums"] = layer_nums_;
-  json_data["q_heads"] = q_heads_;
-  json_data["kv_heads"] = kv_heads_;
-  json_data["kv_dim"] = kv_dim_;
-  json_data["hidden_size"] = hidden_size_;
-  json_data["input_tokens"] = input_tokens_;
-  json_data["prefill_done"] = prefill_done_;
-
-  {
-    auto metadata_file = open_ofstream(path_ / "metadata.json");
-    metadata_file << json_data.dump(2);
-  }
+  saveMetadata();
 
   {
     auto output_tokens_file = open_ofstream(path_ / "output_tokens.bin", std::ios::binary);
@@ -224,6 +196,43 @@ std::array<Tensor, 2> GenerationState::getKV(int layer_idx, int offset, int coun
       k_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
       v_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
   }};
+}
+
+void GenerationState::loadMetadata() {
+  nlohmann::json json_data;
+  {
+    auto metadata_file = open_ifstream(path_ / "metadata.json");
+    metadata_file >> json_data;
+  }
+
+  num_output_tokens_ = json_data.at("num_output_tokens");
+  max_length_ = json_data.at("max_length");
+  layer_nums_ = json_data.at("layer_nums");
+  q_heads_ = json_data.at("q_heads");
+  kv_heads_ = json_data.at("kv_heads");
+  kv_dim_ = json_data.at("kv_dim");
+  hidden_size_ = json_data.at("hidden_size");
+  prefill_done_ = json_data.at("prefill_done");
+  started_ = json_data.at("started");
+  input_tokens_ = json_data.at("input_tokens").get<std::vector<int64_t>>();
+}
+
+void GenerationState::saveMetadata() const {
+  nlohmann::json json_data;
+  json_data["num_output_tokens"] = num_output_tokens_;
+  json_data["max_length"] = max_length_;
+  json_data["layer_nums"] = layer_nums_;
+  json_data["q_heads"] = q_heads_;
+  json_data["kv_heads"] = kv_heads_;
+  json_data["kv_dim"] = kv_dim_;
+  json_data["hidden_size"] = hidden_size_;
+  json_data["input_tokens"] = input_tokens_;
+  json_data["prefill_done"] = prefill_done_;
+  json_data["started"] = started_;
+  {
+    auto metadata_file = open_ofstream(path_ / "metadata.json");
+    metadata_file << json_data.dump(2);
+  }
 }
 
 }  // namespace mllm::models::qwen3_i

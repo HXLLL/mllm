@@ -48,6 +48,9 @@ class GenerationState {
  private:
   const size_t ELEMENT_SIZE = bytesOfType(kFloat32) / lanesOfType(kFloat32);
 
+  void loadMetadata();
+  void saveMetadata() const;
+
   std::filesystem::path path_;
 
   int max_length_;
