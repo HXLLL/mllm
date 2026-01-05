@@ -2,22 +2,47 @@
 #include <filesystem>
 #include <fmt/core.h>
 #include <mllm/mllm.hpp>
+#include <mllm/utils/Timer.hpp>
 #include <mllm/models/qwen3_i/modeling_qwen3_i.hpp>
 #include <mllm/models/qwen3/tokenization_qwen3.hpp>
-#include <mllm/utils/AnyValue.hpp>
+#include "mllm/models/qwen3_i/generation_state.hpp"
 
-using Model = mllm::models::qwen3_i::Qwen3IntermittentForCausalLM;
 
 using mllm::Argparse;
 
 class Qwen3Service {
  public:
-  Qwen3Service(const std::string& model_path, const std::string& tokenizer_path, const std::string& config_path,
-               const std::string& cache_dir, mllm::ModelFileVersion file_version, const int32_t chunk_size)
-      : qwen3_cfg_(config_path), qwen3_tokenizer_(tokenizer_path), qwen3_(qwen3_cfg_, cache_dir) {
-    auto param = mllm::load(model_path, file_version, mllm::kCPU, false);
-    qwen3_.load(param);
-    qwen3_.setChunkSize(chunk_size);
+  using Model = mllm::models::qwen3_i::Qwen3IntermittentForCausalLM;
+  using GenerationState = mllm::models::qwen3_i::GenerationState;
+
+  struct Config {
+    const std::string& model_path;
+    const std::string& tokenizer_path;
+    const std::string& config_path;
+    const std::string& state_path;
+    mllm::ModelFileVersion file_version;
+    int32_t chunk_size;
+    bool use_mmap;
+  };
+
+  explicit Qwen3Service(const Config& config)
+      : config_(config), qwen3_cfg_(config.config_path), qwen3_tokenizer_(config.tokenizer_path) {}
+
+  void load() {
+    mllm::Timer load_state_timer;
+    state_ = GenerationState::create_or_recover(qwen3_cfg_, config_.state_path);
+    auto init_params = Model::InitParams{
+      .cfg = qwen3_cfg_,
+      .state = *state_,
+      .chunk_size = config_.chunk_size,
+    };
+    model_ = std::make_unique<Model>(init_params);
+    fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
+
+    mllm::Timer load_model_timer;
+    auto model_params = mllm::load(config_.model_path, config_.file_version, mllm::kCPU, config_.use_mmap);
+    model_->load(model_params);
+    fmt::print("Model loaded in {}ms\n", load_model_timer.elapsed_ms());
   }
 
   void run() {
@@ -28,6 +53,7 @@ class Qwen3Service {
     mllm::models::ARGenerationOutputPast inputs;
 
     fmt::print("💬 Prompt text (or 'exit/quit'): ");
+
     std::getline(std::cin, prompt_text);
 
     fmt::print("🔄 Processing...\n");
@@ -35,11 +61,11 @@ class Qwen3Service {
     fmt::print("\n🤖 Response: ");
 
     auto callback = [&](int64_t token_id) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; };
-    qwen3_.streamGenerate(inputs, {}, callback);
+    model_->streamGenerate(inputs, {}, callback);
 
     fmt::print("\n{}\n", std::string(60, '-'));
 
-    qwen3_.perfSummary();
+    model_->perfSummary();
   }
 
  private:
@@ -57,10 +83,12 @@ class Qwen3Service {
     for (int64_t token_id : tokens) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; }
   };
 
+  std::unique_ptr<Model> model_;
+  GenerationState::ptr state_;
+  Config config_;
   mllm::models::qwen3::Qwen3Config qwen3_cfg_;
   mllm::models::qwen3::Qwen3Tokenizer qwen3_tokenizer_;
   std::filesystem::path cache_path_;
-  Model qwen3_;
 };
 
 MLLM_MAIN({
@@ -83,12 +111,17 @@ MLLM_MAIN({
   mllm::perf::start();
 #endif
 
-  mllm::ModelFileVersion file_version = model_version.get() == "v2" ? mllm::ModelFileVersion::kV2 : mllm::ModelFileVersion::kV1;
-
-  std::filesystem::path cache_path = std::filesystem::path(cache_dir.get());
-
   try {
-    Qwen3Service qwen3_service(model_path.get(), tokenizer_path.get(), config_path.get(), cache_dir.get(), file_version, chunk_size.get());
+    Qwen3Service::Config service_config = {
+      .model_path = model_path.get(),
+      .tokenizer_path = tokenizer_path.get(),
+      .config_path = config_path.get(),
+      .state_path = std::filesystem::path(cache_dir.get()),
+      .file_version = model_version.get() == "v2" ? mllm::ModelFileVersion::kV2 : mllm::ModelFileVersion::kV1,
+      .chunk_size = chunk_size.get(),
+    };
+    Qwen3Service qwen3_service(service_config);
+    qwen3_service.load();
     qwen3_service.run();
   } catch (const std::exception& e) { 
     fmt::print("\n❌ Error: {}\n[Errno] {} ({})\n{}\n", e.what(), errno, std::strerror(errno), std::string(60, '-'));
