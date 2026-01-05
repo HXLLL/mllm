@@ -10,6 +10,26 @@ if(MLLM_BUILD_EXPERIMENTS)
 endif()
 file(GLOB WENET_AUDIO_SOURCES ${PROJECT_SOURCE_DIR}/third_party/wenet_audio/*)
 
+file (GLOB_RECURSE STRICT_SOURCES CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_LIST_DIR}/models/qwen3_i/*.cpp
+)
+set(STRICT_COMPILE_OPTIONS
+  -Wreorder
+  -Wuninitialized
+  -Wmaybe-uninitialized
+  -Wimplicit-fallthrough
+  -Wreturn-type
+  -Wnull-dereference
+  -Wredundant-decls
+  -Wmissing-declarations
+  -Wsuggest-override
+)
+set_source_files_properties(${STRICT_SOURCES}
+  PROPERTIES
+    COMPILE_OPTIONS "${STRICT_COMPILE_OPTIONS}"
+  )
+
+
 add_library(
   MllmRT SHARED
   mllm.cpp
