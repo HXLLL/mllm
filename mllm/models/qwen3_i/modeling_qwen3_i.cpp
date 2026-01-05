@@ -185,6 +185,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
       auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
       auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
 
+      state_.update_h(0, offset, len, x);
       for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
         recordEvent<LayerBeginEvent>(j, len, offset);
         auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
@@ -195,8 +196,10 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
         state_.update_kv(j, offset, len, k, v);
         x = kv2h_[j](h, q, k, AnyValue(offset))[0];
         recordEvent<LayerCompleteEvent>(j, len, offset);
+        state_.update_h(j + 1, offset, len, x);
       }
 
+      state_.save();
       chunk_outputs.push_back(x);
       offset += len;
     }
@@ -217,6 +220,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
       x = kv2h_[j](h, q, k, AnyValue(offset))[0];
       recordEvent<LayerCompleteEvent>(j, 1, offset);
     }
+    state_.save();
     return {norm_(x)};
   }
 }

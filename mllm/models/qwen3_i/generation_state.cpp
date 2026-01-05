@@ -113,6 +113,24 @@ void GenerationState::save() const {
   size_t num_elements = num_output_tokens_ * hidden_size_;
   const float_t* out_ptr = output_tokens_.cptrAt<float_t>({0, 0});
   output_tokens_file.write(reinterpret_cast<const char*>(out_ptr), num_elements * sizeof(float_t));
+
+  std::filesystem::path h_cache_path = path_ / "h_cache.bin";
+  std::ofstream h_cache_file(h_cache_path, std::ios::binary);
+  for (int i = 0; i < layer_nums_; ++i) {
+    auto h_ptr = h_cache_[i].cptrAt<mllm_byte_t>({0, 0});
+    h_cache_file.write(reinterpret_cast<const char*>(h_ptr), max_length_ * hidden_size_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
+  }
+
+  std::filesystem::path kv_cache_path = path_ / "kv_cache.bin";
+  std::ofstream kv_cache_file(kv_cache_path, std::ios::binary);
+  for (int i = 0; i < layer_nums_; ++i) {
+    auto k_ptr = k_cache_[i].cptrAt<mllm_byte_t>({0, 0, 0});
+    kv_cache_file.write(reinterpret_cast<const char*>(k_ptr), max_length_ * kv_heads_ * kv_dim_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
+  }
+  for (int i = 0; i < layer_nums_; ++i) {
+    auto v_ptr = v_cache_[i].cptrAt<mllm_byte_t>({0, 0, 0});
+    kv_cache_file.write(reinterpret_cast<const char*>(v_ptr), max_length_ * kv_heads_ * kv_dim_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
+  }
 }
 
 void GenerationState::sync_cache() {
