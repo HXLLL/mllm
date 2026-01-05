@@ -41,7 +41,6 @@ class Qwen3Decoder final : public nn::Module {
   int head_dim_;
   int num_attention_heads_;
   int num_key_value_heads_;
-  int num_key_value_groups_;
 
   // attention
   nn::Linear q_proj_;
@@ -79,7 +78,6 @@ class H2KV : public Task {
   int head_dim_;
   int num_attention_heads_;
   int num_key_value_heads_;
-  int num_key_value_groups_;
 
   nn::RMSNorm& input_layer_norm_;
   nn::Linear& q_proj_;
@@ -116,8 +114,8 @@ class Qwen3Text final : public nn::Module {
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 
  private:
-  Tensor prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb);
-  Tensor decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx);
+  [[nodiscard]] Tensor prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb);
+  [[nodiscard]] Tensor decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx);
 
   int chunk_size_;
   int num_layers_;

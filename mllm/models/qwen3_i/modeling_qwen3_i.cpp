@@ -42,7 +42,6 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, Gene
       head_dim_(cfg.head_dim),
       num_attention_heads_(cfg.num_attention_heads),
       num_key_value_heads_(cfg.num_key_value_heads),
-      num_key_value_groups_(cfg.num_attention_heads / cfg.num_key_value_heads),
       q_proj_(reg<nn::Linear>("self_attn.q_proj", cfg.hidden_size, cfg.head_dim * cfg.num_attention_heads, cfg.attention_bias, cfg.linear_impl_type)),
       k_proj_(reg<nn::Linear>("self_attn.k_proj", cfg.hidden_size, cfg.head_dim * cfg.num_key_value_heads, cfg.attention_bias, cfg.linear_impl_type)),
       v_proj_(reg<nn::Linear>("self_attn.v_proj", cfg.hidden_size, cfg.head_dim * cfg.num_key_value_heads, cfg.attention_bias, cfg.linear_impl_type)),
@@ -68,7 +67,6 @@ H2KV::H2KV(Qwen3Decoder& decoder, GenerationState& state)
       head_dim_(decoder.head_dim_),
       num_attention_heads_(decoder.num_attention_heads_),
       num_key_value_heads_(decoder.num_key_value_heads_),
-      num_key_value_groups_(decoder.num_key_value_groups_),
       input_layer_norm_(decoder.input_layer_norm_),
       q_proj_(decoder.q_proj_),
       k_proj_(decoder.k_proj_),
@@ -125,12 +123,11 @@ std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::
   const int count = hidden_states.shape()[1];
 
   auto [cached_key, cached_value] = state_.getKV(layer_idx_, 0, offset + count);
+  MLLM_RT_ASSERT(cached_key.dtype() == kFloat32);
 
   // Compute attention scores with scaling
   const float scale = 1.f / sqrtf(static_cast<float>(head_dim_));
-  Tensor attn = (cached_key.dtype() == kFloat32)
-      ? softmax_(mask_(nn::functional::matmul(query, cached_key, false, true) * scale))
-      : softmax_(mask_(nn::functional::matmul(query.to(kFloat32), cached_key.to(kFloat32), false, true) * scale)).to(kFloat16);
+  Tensor attn = softmax_(mask_(nn::functional::matmul(query, cached_key, false, true) * scale));
   auto output = nn::functional::matmul(attn, cached_value);
   output = output.transpose(1, 2).view({1, count, num_attention_heads_ * head_dim_});
   auto attn_output = o_proj_(output);
@@ -198,12 +195,12 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
       state_.updateH(j + 1, offset, len, x);
     }
 
-    state_.set_prefill_done();
-    state_.save();
+    state_.sync_cache();
     chunk_outputs.push_back(x);
     offset += len;
     MLLM_INFO("Prefilling [{} / {}]", offset, seq_len);
   }
+  state_.set_prefill_done();
   auto output = nn::functional::concat(chunk_outputs, 1);
 
   return norm_(output);
@@ -224,7 +221,7 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
     x = kv2h_[j](h, q, k, AnyValue(token_idx))[0];
     recordEvent<LayerCompleteEvent>(j, 1, token_idx);
   }
-  state_.save();
+  state_.sync_cache();
   return norm_(x);
 }
 

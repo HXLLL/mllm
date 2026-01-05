@@ -44,14 +44,14 @@ void GenerationState::load() {
     metadata_file >> json_data;
   }
 
-  num_output_tokens_ = json_data["num_output_tokens"];
-  max_length_ = json_data["max_length"];
-  layer_nums_ = json_data["layer_nums"];
-  q_heads_ = json_data["q_heads"];
-  kv_heads_ = json_data["kv_heads"];
-  kv_dim_ = json_data["kv_dim"];
-  hidden_size_ = json_data["hidden_size"];
-  prefill_done_ = json_data["prefill_done"];
+  num_output_tokens_ = json_data.at("num_output_tokens");
+  max_length_ = json_data.at("max_length");
+  layer_nums_ = json_data.at("layer_nums");
+  q_heads_ = json_data.at("q_heads");
+  kv_heads_ = json_data.at("kv_heads");
+  kv_dim_ = json_data.at("kv_dim");
+  hidden_size_ = json_data.at("hidden_size");
+  prefill_done_ = json_data.at("prefill_done");
   input_tokens_ = json_data.at("input_tokens").get<std::vector<int64_t>>();
 
   output_tokens_ = Tensor::empty({max_length_, hidden_size_}, kFloat32, kCPU).alloc();
@@ -134,7 +134,7 @@ void GenerationState::save() const {
 
   {
     auto h_cache_file = open_ofstream(path_ / "h_cache.bin", std::ios::binary);
-    for (int i = 0; i < layer_nums_; ++i) {
+    for (int i = 0; i <= layer_nums_; ++i) {
       auto h_ptr = h_cache_[i].cptrAt<char>({0, 0, 0});
       h_cache_file.write(h_ptr, max_length_ * hidden_size_ * ELEMENT_SIZE);
     }
@@ -151,6 +151,11 @@ void GenerationState::save() const {
       kv_cache_file.write(v_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
     }
   }
+}
+
+void GenerationState::sync_cache() const {
+  save();
+  // TODO: use a more efficient approach
 }
 
 void GenerationState::start(const Tensor& token_ids) {

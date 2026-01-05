@@ -25,6 +25,7 @@ class GenerationState {
   void load();
   void create();
   void save() const;
+  void sync_cache() const;
 
   void start(const Tensor& token_ids);
   [[nodiscard]] int hasStarted() const;

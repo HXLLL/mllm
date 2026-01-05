@@ -16,10 +16,10 @@ class Qwen3Service {
   using GenerationState = mllm::models::qwen3_i::GenerationState;
 
   struct Config {
-    std::string model_path;
-    std::string tokenizer_path;
-    std::string config_path;
-    std::string state_path;
+    std::filesystem::path model_path;
+    std::filesystem::path tokenizer_path;
+    std::filesystem::path config_path;
+    std::filesystem::path state_path;
     mllm::ModelFileVersion file_version;
     int32_t chunk_size;
     bool use_mmap;
@@ -71,6 +71,7 @@ class Qwen3Service {
 
     model_->streamGenerate(inputs, {},
                            [&](int64_t token_id) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; });
+    state_.save();
 
     fmt::print("\n{}\n", std::string(60, '-'));
 
@@ -78,7 +79,7 @@ class Qwen3Service {
   }
 
  private:
-  mllm::Tensor buildSequenceFromIds(const std::vector<int64_t>& ids) {
+  static mllm::Tensor buildSequenceFromIds(const std::vector<int64_t>& ids) {
     int seq_len = ids.size();
     mllm::Tensor sequence = mllm::Tensor::empty({1, seq_len}, mllm::kInt64, mllm::kCPU).alloc();
     auto* ptr = sequence.ptr<int64_t>();
