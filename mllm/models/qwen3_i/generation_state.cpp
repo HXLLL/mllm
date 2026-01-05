@@ -10,8 +10,7 @@ namespace mllm::models::qwen3_i {
 
 namespace fs = std::filesystem;
 
-GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen3Config& cfg,
-                                                                      const fs::path& path) {
+GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen3Config& cfg, const fs::path& path) {
   return {
       .path = path,
       .max_length = cfg.max_cache_length,
@@ -54,7 +53,7 @@ GenerationState::ptr GenerationState::create_or_recover(const Qwen3Config& cfg, 
   }
 }
 
-template <typename... Args>
+template<typename... Args>
 static inline std::ofstream open_ofstream(const fs::path& path, Args&&... args) {
   std::ofstream ofs;
   ofs.open(path, std::forward<Args>(args)...);
@@ -62,7 +61,7 @@ static inline std::ofstream open_ofstream(const fs::path& path, Args&&... args) 
   return ofs;
 }
 
-template <typename... Args>
+template<typename... Args>
 static inline std::ifstream open_ifstream(const fs::path& path, Args&&... args) {
   std::ifstream ifs;
   ifs.open(path, std::forward<Args>(args)...);
@@ -72,12 +71,12 @@ static inline std::ifstream open_ifstream(const fs::path& path, Args&&... args) 
 
 GenerationState::ptr GenerationState::recover(const Qwen3Config& cfg, const fs::path& path) {
   MLLM_INFO("GenerationState: Recovering state from {}", path.string());
-  
+
   auto metadata_file = open_ifstream(path / "metadata.json");
   nlohmann::json json_data;
   metadata_file >> json_data;
   metadata_file.close();
-  
+
   auto params = InitParams::make_default(cfg, path);
   params.num_output_tokens = json_data["num_output_tokens"];
   params.max_length = json_data["max_length"];
@@ -88,7 +87,7 @@ GenerationState::ptr GenerationState::recover(const Qwen3Config& cfg, const fs::
   params.hidden_size = json_data["hidden_size"];
   params.prefill_done = json_data["prefill_done"];
   params.input_tokens = json_data.at("input_tokens").get<std::vector<int64_t>>();
-  
+
   auto max_length = params.max_length;
   auto hidden_size = params.hidden_size;
   auto layer_nums = params.layer_nums;
@@ -101,7 +100,7 @@ GenerationState::ptr GenerationState::recover(const Qwen3Config& cfg, const fs::
   auto output_tokens_file = open_ifstream(path / "output_tokens.bin", std::ios::binary);
   auto out_ptr = params.output_tokens.ptrAt<char>({0, 0});
   output_tokens_file.read(out_ptr, num_output_tokens * hidden_size * sizeof(float_t));
-  
+
   auto kv_cache_file = open_ifstream(path / "kv_cache.bin", std::ios::binary);
 
   params.k_cache.reserve(layer_nums);
@@ -117,12 +116,12 @@ GenerationState::ptr GenerationState::recover(const Qwen3Config& cfg, const fs::
     kv_cache_file.read(v_ptr, max_length * kv_heads * kv_dim * bytesOfType(kFloat32) / lanesOfType(kFloat32));
   }
   kv_cache_file.close();
-  
+
   auto h_cache_file = open_ifstream(path / "h_cache.bin", std::ios::binary);
   params.h_cache.reserve(layer_nums + 1);
   for (int i = 0; i < layer_nums + 1; ++i) {
     params.h_cache.emplace_back(Tensor::empty({1, max_length, hidden_size}, kFloat32, kCPU).alloc());
-    auto h_ptr = params.h_cache[i].ptrAt<char>({0,  0, 0});
+    auto h_ptr = params.h_cache[i].ptrAt<char>({0, 0, 0});
     h_cache_file.read(h_ptr, max_length * hidden_size * bytesOfType(kFloat32) / lanesOfType(kFloat32));
   }
   h_cache_file.close();
@@ -152,22 +151,16 @@ GenerationState::ptr GenerationState::create(const Qwen3Config& cfg, const fs::p
 void GenerationState::start_prefill(const Tensor& token_ids) {
   MLLM_RT_ASSERT(token_ids.shape()[0] == 1 && token_ids.dtype() == kInt64);
   auto seq_len = token_ids.shape()[1];
-  for (int i = 0; i < seq_len; ++i) {
-    input_tokens_.push_back(*token_ids.cptrAt<int64_t>({0, i}));
-  }
+  for (int i = 0; i < seq_len; ++i) { input_tokens_.push_back(*token_ids.cptrAt<int64_t>({0, i})); }
 }
 
 void GenerationState::start_decode(const Tensor& token_id) {
   MLLM_RT_ASSERT(token_id.shape() == std::vector<int32_t>({1, 1}) && token_id.dtype() == kInt64);
 }
 
-int GenerationState::prefill_done() const {
-  return prefill_done_;
-}
+int GenerationState::prefill_done() const { return prefill_done_; }
 
-void GenerationState::set_prefill_done() {
-  prefill_done_ = 1;
-}
+void GenerationState::set_prefill_done() { prefill_done_ = 1; }
 
 void GenerationState::append_output_token(const Tensor& token) {
   MLLM_RT_ASSERT(token.shape() == std::vector<int32_t>({1, 1, hidden_size_}) && token.dtype() == kFloat32);
@@ -179,7 +172,7 @@ void GenerationState::append_output_token(const Tensor& token) {
 
 void GenerationState::save() const {
   if (!fs::exists(path_)) {
-    fs::create_directories(path_); // 递归创建
+    fs::create_directories(path_);  // 递归创建
   }
 
   nlohmann::json json_data;
@@ -221,10 +214,10 @@ void GenerationState::save() const {
   kv_cache_file.close();
 }
 
-void GenerationState::update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v) {
+void GenerationState::update_kv(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v) {
   MLLM_RT_ASSERT(k.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
   MLLM_RT_ASSERT(v.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
-  
+
   auto repeat_times = q_heads_ / kv_heads_;
 
   for (int h = 0; h < kv_heads_; ++h) {
@@ -239,7 +232,7 @@ void GenerationState::update_kv(int layer_idx, int offset, int count, const Tens
   }
 }
 
-void GenerationState::update_h(int layer_idx, int offset, int count, const Tensor &h) {
+void GenerationState::update_h(int layer_idx, int offset, int count, const Tensor& h) {
   MLLM_RT_ASSERT(h.shape() == std::vector<int32_t>({1, count, hidden_size_}) && h.dtype() == kFloat32);
   auto h_ptr = h.cptrAt<mllm_byte_t>({0, 0, 0});
   auto h_cache_ptr = h_cache_[layer_idx].ptrAt<mllm_byte_t>({0, offset, 0});
@@ -252,13 +245,13 @@ Tensor GenerationState::get_h(int layer_idx, int offset, int count) {
 
 std::array<Tensor, 2> GenerationState::get_kv(int layer_idx) {
   MLLM_ERROR_EXIT(ExitCode::kCoreError, "to be implemented");
-  return { k_cache_[layer_idx][{0, kAll, kAll, kAll}], v_cache_[layer_idx][{0, kAll, kAll, kAll}] };
+  return {k_cache_[layer_idx][{0, kAll, kAll, kAll}], v_cache_[layer_idx][{0, kAll, kAll, kAll}]};
 }
 
 std::array<Tensor, 2> GenerationState::get_kv(int layer_idx, int offset, int count) {
   return {{
-    k_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
-    v_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
+      k_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
+      v_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
   }};
 }
 

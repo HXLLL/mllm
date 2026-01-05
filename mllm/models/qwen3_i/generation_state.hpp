@@ -55,11 +55,11 @@ class GenerationState {
 
   void save() const;
 
-  void update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v);
-  [[nodiscard]] std::array<Tensor, 2>get_kv(int layer_idx);
-  [[nodiscard]] std::array<Tensor, 2>get_kv(int layer_idx, int offset, int count);
+  void update_kv(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v);
+  [[nodiscard]] std::array<Tensor, 2> get_kv(int layer_idx);
+  [[nodiscard]] std::array<Tensor, 2> get_kv(int layer_idx, int offset, int count);
 
-  void update_h(int layer_idx, int offset, int count, const Tensor &h);
+  void update_h(int layer_idx, int offset, int count, const Tensor& h);
   Tensor get_h(int layer_idx, int offset, int count);
 
  private:
