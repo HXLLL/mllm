@@ -26,22 +26,22 @@ class GenerationState {
   void create();
 
   void start(const Tensor& token_ids);
-  int has_started() const;
+  [[nodiscard]] int hasStarted() const;
 
   void start_decode(const Tensor& token_id);
-  void append_output_token(const Tensor& token);
+  void appendOutputToken(const Tensor& token);
 
   void set_prefill_done();
   [[nodiscard]] int prefill_done() const;
 
   void save() const;
 
-  void update_kv(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v);
-  [[nodiscard]] std::array<Tensor, 2> get_kv(int layer_idx);
+  void updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v);
+  [[nodiscard]] std::array<Tensor, 2> getKV(int layer_idx);
   [[nodiscard]] std::array<Tensor, 2> get_kv(int layer_idx, int offset, int count);
 
-  void update_h(int layer_idx, int offset, int count, const Tensor& h);
-  Tensor get_h(int layer_idx, int offset, int count);
+  void updateH(int layer_idx, int offset, int count, const Tensor& h);
+  Tensor getH(int layer_idx, int offset, int count);
 
  private:
   std::filesystem::path path_;

@@ -109,7 +109,7 @@ void GenerationState::start(const Tensor& token_ids) {
   started_ = 1;
 }
 
-int GenerationState::has_started() const {
+int GenerationState::hasStarted() const {
   return started_;
 }
 
@@ -121,7 +121,7 @@ int GenerationState::prefill_done() const { return prefill_done_; }
 
 void GenerationState::set_prefill_done() { prefill_done_ = 1; }
 
-void GenerationState::append_output_token(const Tensor& token) {
+void GenerationState::appendOutputToken(const Tensor& token) {
   MLLM_RT_ASSERT(token.shape() == std::vector<int32_t>({1, 1, hidden_size_}) && token.dtype() == kFloat32);
   auto src = token.cptrAt<float_t>({0, 0, 0});
   auto dst = output_tokens_.ptrAt<float_t>({num_output_tokens_, 0});
@@ -173,7 +173,7 @@ void GenerationState::save() const {
   kv_cache_file.close();
 }
 
-void GenerationState::update_kv(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v) {
+void GenerationState::updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v) {
   MLLM_RT_ASSERT(k.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
   MLLM_RT_ASSERT(v.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
 
@@ -191,18 +191,18 @@ void GenerationState::update_kv(int layer_idx, int offset, int count, const Tens
   }
 }
 
-void GenerationState::update_h(int layer_idx, int offset, int count, const Tensor& h) {
+void GenerationState::updateH(int layer_idx, int offset, int count, const Tensor& h) {
   MLLM_RT_ASSERT(h.shape() == std::vector<int32_t>({1, count, hidden_size_}) && h.dtype() == kFloat32);
   auto h_ptr = h.cptrAt<mllm_byte_t>({0, 0, 0});
   auto h_cache_ptr = h_cache_[layer_idx].ptrAt<mllm_byte_t>({0, offset, 0});
   std::memcpy(h_cache_ptr, h_ptr, count * hidden_size_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
 }
 
-Tensor GenerationState::get_h(int layer_idx, int offset, int count) {
+Tensor GenerationState::getH(int layer_idx, int offset, int count) {
   return h_cache_[layer_idx][{0, {offset, offset + count}, kAll}];
 }
 
-std::array<Tensor, 2> GenerationState::get_kv(int layer_idx) {
+std::array<Tensor, 2> GenerationState::getKV(int layer_idx) {
   MLLM_ERROR_EXIT(ExitCode::kCoreError, "to be implemented");
   return {k_cache_[layer_idx][{0, kAll, kAll, kAll}], v_cache_[layer_idx][{0, kAll, kAll, kAll}]};
 }
