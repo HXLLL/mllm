@@ -38,10 +38,11 @@ GenerationState::GenerationState(const Qwen3Config& cfg, const fs::path& path)
 void GenerationState::load() {
   MLLM_INFO("GenerationState: Loading state from {}", path_.string());
 
-  auto metadata_file = open_ifstream(path_ / "metadata.json");
   nlohmann::json json_data;
-  metadata_file >> json_data;
-  metadata_file.close();
+  {
+    auto metadata_file = open_ifstream(path_ / "metadata.json");
+    metadata_file >> json_data;
+  }
 
   num_output_tokens_ = json_data["num_output_tokens"];
   max_length_ = json_data["max_length"];
@@ -54,34 +55,38 @@ void GenerationState::load() {
   input_tokens_ = json_data.at("input_tokens").get<std::vector<int64_t>>();
 
   output_tokens_ = Tensor::empty({max_length_, hidden_size_}, kFloat32, kCPU).alloc();
-  auto output_tokens_file = open_ifstream(path_ / "output_tokens.bin", std::ios::binary);
-  auto out_ptr = output_tokens_.ptrAt<char>({0, 0});
-  output_tokens_file.read(out_ptr, num_output_tokens_ * hidden_size_ * ELEMENT_SIZE);
-
-  auto kv_cache_file = open_ifstream(path_ / "kv_cache.bin", std::ios::binary);
-
-  k_cache_.reserve(layer_nums_);
-  for (int i = 0; i < layer_nums_; ++i) {
-    k_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
-    auto k_ptr = k_cache_[i].ptrAt<char>({0, 0, 0, 0});
-    kv_cache_file.read(k_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+  {
+    auto output_tokens_file = open_ifstream(path_ / "output_tokens.bin", std::ios::binary);
+    auto out_ptr = output_tokens_.ptrAt<char>({0, 0});
+    output_tokens_file.read(out_ptr, num_output_tokens_ * hidden_size_ * ELEMENT_SIZE);
   }
-  v_cache_.reserve(layer_nums_);
-  for (int i = 0; i < layer_nums_; ++i) {
-    v_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
-    auto v_ptr = v_cache_[i].ptrAt<char>({0, 0, 0, 0});
-    kv_cache_file.read(v_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
-  }
-  kv_cache_file.close();
 
-  auto h_cache_file = open_ifstream(path_ / "h_cache.bin", std::ios::binary);
-  h_cache_.reserve(layer_nums_ + 1);
-  for (int i = 0; i < layer_nums_ + 1; ++i) {
-    h_cache_.emplace_back(Tensor::empty({1, max_length_, hidden_size_}, kFloat32, kCPU).alloc());
-    auto h_ptr = h_cache_[i].ptrAt<char>({0, 0, 0});
-    h_cache_file.read(h_ptr, max_length_ * hidden_size_ * ELEMENT_SIZE);
+  {
+    auto kv_cache_file = open_ifstream(path_ / "kv_cache.bin", std::ios::binary);
+
+    k_cache_.reserve(layer_nums_);
+    for (int i = 0; i < layer_nums_; ++i) {
+      k_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
+      auto k_ptr = k_cache_[i].ptrAt<char>({0, 0, 0, 0});
+      kv_cache_file.read(k_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+    }
+    v_cache_.reserve(layer_nums_);
+    for (int i = 0; i < layer_nums_; ++i) {
+      v_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
+      auto v_ptr = v_cache_[i].ptrAt<char>({0, 0, 0, 0});
+      kv_cache_file.read(v_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+    }
   }
-  h_cache_file.close();
+
+  {
+    auto h_cache_file = open_ifstream(path_ / "h_cache.bin", std::ios::binary);
+    h_cache_.reserve(layer_nums_ + 1);
+    for (int i = 0; i < layer_nums_ + 1; ++i) {
+      h_cache_.emplace_back(Tensor::empty({1, max_length_, hidden_size_}, kFloat32, kCPU).alloc());
+      auto h_ptr = h_cache_[i].ptrAt<char>({0, 0, 0});
+      h_cache_file.read(h_ptr, max_length_ * hidden_size_ * ELEMENT_SIZE);
+    }
+  }
 }
 
 void GenerationState::create() {
@@ -102,7 +107,7 @@ void GenerationState::create() {
 
 void GenerationState::save() const {
   if (!fs::exists(path_)) {
-    fs::create_directories(path_);  // 递归创建
+    fs::create_directories(path_);
   }
 
   nlohmann::json json_data;
@@ -116,32 +121,36 @@ void GenerationState::save() const {
   json_data["input_tokens"] = input_tokens_;
   json_data["prefill_done"] = prefill_done_;
 
-  auto metadata_file = open_ofstream(path_ / "metadata.json");
-  metadata_file << json_data.dump(2);
-  metadata_file.close();
-
-  auto output_tokens_file = open_ofstream(path_ / "output_tokens.bin", std::ios::binary);
-  auto out_ptr = output_tokens_.cptrAt<char>({0, 0});
-  output_tokens_file.write(out_ptr, num_output_tokens_ * hidden_size_ * ELEMENT_SIZE);
-  output_tokens_file.close();
-
-  auto h_cache_file = open_ofstream(path_ / "h_cache.bin", std::ios::binary);
-  for (int i = 0; i < layer_nums_; ++i) {
-    auto h_ptr = h_cache_[i].cptrAt<char>({0, 0, 0});
-    h_cache_file.write(h_ptr, max_length_ * hidden_size_ * ELEMENT_SIZE);
+  {
+    auto metadata_file = open_ofstream(path_ / "metadata.json");
+    metadata_file << json_data.dump(2);
   }
-  h_cache_file.close();
 
-  auto kv_cache_file = open_ofstream(path_ / "kv_cache.bin", std::ios::binary);
-  for (int i = 0; i < layer_nums_; ++i) {
-    auto k_ptr = k_cache_[i].cptrAt<char>({0, 0, 0, 0});
-    kv_cache_file.write(k_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+  {
+    auto output_tokens_file = open_ofstream(path_ / "output_tokens.bin", std::ios::binary);
+    auto out_ptr = output_tokens_.cptrAt<char>({0, 0});
+    output_tokens_file.write(out_ptr, num_output_tokens_ * hidden_size_ * ELEMENT_SIZE);
   }
-  for (int i = 0; i < layer_nums_; ++i) {
-    auto v_ptr = v_cache_[i].cptrAt<char>({0, 0, 0, 0});
-    kv_cache_file.write(v_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+
+  {
+    auto h_cache_file = open_ofstream(path_ / "h_cache.bin", std::ios::binary);
+    for (int i = 0; i < layer_nums_; ++i) {
+      auto h_ptr = h_cache_[i].cptrAt<char>({0, 0, 0});
+      h_cache_file.write(h_ptr, max_length_ * hidden_size_ * ELEMENT_SIZE);
+    }
   }
-  kv_cache_file.close();
+
+  {
+    auto kv_cache_file = open_ofstream(path_ / "kv_cache.bin", std::ios::binary);
+    for (int i = 0; i < layer_nums_; ++i) {
+      auto k_ptr = k_cache_[i].cptrAt<char>({0, 0, 0, 0});
+      kv_cache_file.write(k_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+    }
+    for (int i = 0; i < layer_nums_; ++i) {
+      auto v_ptr = v_cache_[i].cptrAt<char>({0, 0, 0, 0});
+      kv_cache_file.write(v_ptr, max_length_ * kv_heads_ * kv_dim_ * ELEMENT_SIZE);
+    }
+  }
 }
 
 void GenerationState::start(const Tensor& token_ids) {

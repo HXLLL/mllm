@@ -124,7 +124,7 @@ std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::
   int64_t offset = args[0].get<int64_t>();
   const int count = hidden_states.shape()[1];
 
-  auto [cached_key, cached_value] = state_.get_kv(layer_idx_, 0, offset + count);
+  auto [cached_key, cached_value] = state_.getKV(layer_idx_, 0, offset + count);
 
   // Compute attention scores with scaling
   const float scale = 1.f / sqrtf(static_cast<float>(head_dim_));
