@@ -13,10 +13,11 @@ using mllm::Argparse;
 class Qwen3Service {
  public:
   Qwen3Service(const std::string& model_path, const std::string& tokenizer_path, const std::string& config_path,
-               const std::string& cache_dir, mllm::ModelFileVersion file_version)
+               const std::string& cache_dir, mllm::ModelFileVersion file_version, const int32_t chunk_size)
       : qwen3_cfg_(config_path), qwen3_tokenizer_(tokenizer_path), qwen3_(qwen3_cfg_, cache_dir) {
     auto param = mllm::load(model_path, file_version, mllm::kCPU, false);
     qwen3_.load(param);
+    qwen3_.setChunkSize(chunk_size);
   }
 
   void run() {
@@ -69,6 +70,7 @@ MLLM_MAIN({
   auto& tokenizer_path = Argparse::add<std::string>("-t|--tokenizer_path").help("Tokenizer directory").required(true);
   auto& config_path = Argparse::add<std::string>("-c|--config_path").help("Config path").required(true);
   auto& cache_dir = Argparse::add<std::string>("-cd|--cache_dir").help("Cache directory").required(true);
+  auto& chunk_size = Argparse::add<int32_t>("-cs|--chunk_size").help("Chunk size").def(32);
   Argparse::parse(argc, argv);
 
   if (help.isSet()) {
@@ -86,7 +88,7 @@ MLLM_MAIN({
   std::filesystem::path cache_path = std::filesystem::path(cache_dir.get());
 
   try {
-    Qwen3Service qwen3_service(model_path.get(), tokenizer_path.get(), config_path.get(), cache_dir.get(), file_version);
+    Qwen3Service qwen3_service(model_path.get(), tokenizer_path.get(), config_path.get(), cache_dir.get(), file_version, chunk_size.get());
     qwen3_service.run();
   } catch (const std::exception& e) { 
     fmt::print("\n❌ Error: {}\n[Errno] {} ({})\n{}\n", e.what(), errno, std::strerror(errno), std::string(60, '-'));
