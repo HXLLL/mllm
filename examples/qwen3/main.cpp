@@ -29,15 +29,14 @@ class Qwen3Service {
       : config_(config), qwen3_cfg_(config.config_path), qwen3_tokenizer_(config.tokenizer_path) {}
 
   void load() {
-    mllm::Timer load_state_timer;
-    state_ = GenerationState::create_or_recover(qwen3_cfg_, config_.state_path);
-    auto init_params = Model::InitParams{
-      .cfg = qwen3_cfg_,
-      .state = *state_,
-      .chunk_size = config_.chunk_size,
-    };
-    model_ = std::make_unique<Model>(init_params);
-    fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
+    if (std::filesystem::exists(config_.state_path)) {
+      mllm::Timer load_state_timer;
+      state_ = GenerationState::recover(qwen3_cfg_, config_.state_path);
+      fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
+    } else {
+      state_ = GenerationState::create(qwen3_cfg_, config_.state_path);
+    }
+    model_ = std::make_unique<Model>(qwen3_cfg_, *state_, config_.chunk_size);
 
     mllm::Timer load_model_timer;
     auto model_params = mllm::load(config_.model_path, config_.file_version, mllm::kCPU, config_.use_mmap);
@@ -112,15 +111,14 @@ MLLM_MAIN({
 #endif
 
   try {
-    Qwen3Service::Config service_config = {
+    Qwen3Service qwen3_service(Qwen3Service::Config{
       .model_path = model_path.get(),
       .tokenizer_path = tokenizer_path.get(),
       .config_path = config_path.get(),
       .state_path = std::filesystem::path(cache_dir.get()),
       .file_version = model_version.get() == "v2" ? mllm::ModelFileVersion::kV2 : mllm::ModelFileVersion::kV1,
       .chunk_size = chunk_size.get(),
-    };
-    Qwen3Service qwen3_service(service_config);
+    });
     qwen3_service.load();
     qwen3_service.run();
   } catch (const std::exception& e) { 

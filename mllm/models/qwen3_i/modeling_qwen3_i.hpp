@@ -132,12 +132,7 @@ class Qwen3Text final : public nn::Module {
 
 class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {
  public:
-  struct InitParams {
-    const Qwen3Config& cfg;
-    GenerationState& state;
-    const int chunk_size;
-  };
-  explicit Qwen3IntermittentForCausalLM(const InitParams& params);
+  explicit Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, GenerationState& state, int chunk_size);
 
   ARGenerationOutputPast forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) override;
   void streamGenerate(const ARGenerationOutputPast& input, const ARGenerationArgs& args,

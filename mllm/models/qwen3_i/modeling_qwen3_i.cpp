@@ -234,8 +234,8 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
 
 /* ARGeneration Implementation */
 
-Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const InitParams& params)
-    : cfg_(params.cfg), state_(params.state), llm_(reg<Qwen3Text>("model", cfg_, state_, params.chunk_size)) {
+Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, GenerationState& state, int chunk_size)
+    : cfg_(cfg), state_(state), llm_(reg<Qwen3Text>("model", cfg_, state_, chunk_size)) {
   MLLM_INFO("Initializing intermittent Qwen3 model");
 
   eos_token_id_ = cfg_.end_of_text_token_id;
