@@ -2,7 +2,6 @@
 
 #include <queue>
 #include <unordered_map>
-#include <optional>
 #include <unordered_map>
 #include "mllm/core/Tensor.hpp"
 #include "mllm/mllm.hpp"
@@ -36,6 +35,7 @@ class GenerationState {
     Tensor output_tokens;
     std::vector<Tensor> k_cache;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
     std::vector<Tensor> v_cache;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
+    std::vector<Tensor> h_cache;  // Shape: [layer_nums + 1, max_cache_length, hidden_size]
 
     static InitParams make_default(const Qwen3Config& cfg, const std::filesystem::path& path);
   };
@@ -74,7 +74,7 @@ class GenerationState {
   Tensor output_tokens_;
   std::vector<Tensor> k_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
   std::vector<Tensor> v_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
-
+  std::vector<Tensor> h_cache_;  // Shape: [layer_nums + 1, max_cache_length, hidden_size]
   std::unordered_map<std::pair<int, int>, bool, PairHash> dirty;
   std::queue<std::pair<int, int>> dirty_queue;
 };

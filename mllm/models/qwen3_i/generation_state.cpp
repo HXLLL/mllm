@@ -22,6 +22,7 @@ GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen
       .output_tokens = {},
       .k_cache = {},
       .v_cache = {},
+      .h_cache = {},
   };
 }
 
@@ -37,7 +38,8 @@ GenerationState::GenerationState(InitParams&& params)
       input_tokens_(std::move(params.input_tokens)),
       output_tokens_(std::move(params.output_tokens)),
       k_cache_(std::move(params.k_cache)),
-      v_cache_(std::move(params.v_cache)) {}
+      v_cache_(std::move(params.v_cache)),
+      h_cache_(std::move(params.h_cache)) {}
 
 GenerationState::ptr GenerationState::create_or_recover(const Qwen3Config& cfg, const std::filesystem::path& path) {
   if (std::filesystem::exists(path)) {
@@ -61,16 +63,18 @@ GenerationState::ptr GenerationState::create(const Qwen3Config& cfg, const std::
   params.output_tokens = Tensor::empty({cfg.max_cache_length, cfg.hidden_size}, kFloat32, kCPU).alloc();
   params.k_cache.reserve(layer_nums);
   params.v_cache.reserve(layer_nums);
+  params.h_cache.reserve(layer_nums + 1);
   for (int i = 0; i < layer_nums; ++i) {
     params.k_cache.emplace_back(Tensor::empty({cfg.num_attention_heads, cfg.max_cache_length, cfg.head_dim}, kFloat32, kCPU).alloc());
     params.v_cache.emplace_back(Tensor::empty({cfg.num_attention_heads, cfg.max_cache_length, cfg.head_dim}, kFloat32, kCPU).alloc());
+    params.h_cache.emplace_back(Tensor::empty({cfg.max_cache_length, cfg.hidden_size}, kFloat32, kCPU).alloc());
   }
+  params.h_cache.emplace_back(Tensor::empty({cfg.max_cache_length, cfg.hidden_size}, kFloat32, kCPU).alloc());
   return std::make_shared<GenerationState>(std::move(params));
 }
 
 void GenerationState::start_prefill(const Tensor& token_ids) {
-  MLLM_RT_ASSERT_EQ(token_ids.shape()[0], 1);
-  MLLM_RT_ASSERT_EQ(token_ids.dtype(), kInt64);
+  MLLM_RT_ASSERT(token_ids.shape()[0] == 1 && token_ids.dtype() == kInt64);
   auto seq_len = token_ids.shape()[1];
   for (int i = 0; i < seq_len; ++i) {
     input_tokens_.push_back(*token_ids.cptrAt<int64_t>({0, i}));
@@ -78,14 +82,11 @@ void GenerationState::start_prefill(const Tensor& token_ids) {
 }
 
 void GenerationState::start_decode(const Tensor& token_id) {
-  MLLM_RT_ASSERT_EQ(token_id.shape()[0], 1);
-  MLLM_RT_ASSERT_EQ(token_id.shape()[1], 1);
-  MLLM_RT_ASSERT_EQ(token_id.dtype(), kInt64);
+  MLLM_RT_ASSERT(token_id.shape() == std::vector<int32_t>({1, 1}) && token_id.dtype() == kInt64);
 }
 
 void GenerationState::append_output_token(const Tensor& token) {
-  MLLM_RT_ASSERT(token.shape()[0] == 1 && token.shape()[1] == 1 && token.shape()[2] == hidden_size_);
-  MLLM_RT_ASSERT(token.dtype() == kFloat32);
+  MLLM_RT_ASSERT(token.shape() == std::vector<int32_t>({1, 1, hidden_size_}) && token.dtype() == kFloat32);
   auto src = token.cptrAt<float_t>({0, 0, 0});
   auto dst = output_tokens_.ptrAt<float_t>({num_output_tokens_, 0});
   std::memcpy(dst, src, hidden_size_ * sizeof(float_t));
@@ -114,21 +115,14 @@ void GenerationState::save() const {
   output_tokens_file.write(reinterpret_cast<const char*>(out_ptr), num_elements * sizeof(float_t));
 }
 
-
 void GenerationState::sync_cache() {
   // MLLM_INFO("GenerationState: Syncing cache");
 }
 
 void GenerationState::update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v) {
-  MLLM_RT_ASSERT_EQ(k.shape()[0], 1);
-  MLLM_RT_ASSERT_EQ(k.shape()[1], kv_heads_);
-  MLLM_RT_ASSERT_EQ(k.shape()[2], count);
-  MLLM_RT_ASSERT_EQ(k.shape()[3], kv_dim_);
-  MLLM_RT_ASSERT_EQ(v.shape()[0], 1);
-  MLLM_RT_ASSERT_EQ(v.shape()[1], kv_heads_);
-  MLLM_RT_ASSERT_EQ(v.shape()[2], count);
-  MLLM_RT_ASSERT_EQ(v.shape()[3], kv_dim_);
-
+  MLLM_RT_ASSERT(k.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
+  MLLM_RT_ASSERT(v.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
+  
   auto repeat_times = q_heads_ / kv_heads_;
 
   for (int h = 0; h < kv_heads_; ++h) {
@@ -144,10 +138,10 @@ void GenerationState::update_kv(int layer_idx, int offset, int count, const Tens
 }
 
 void GenerationState::update_h(int layer_idx, int offset, int count, const Tensor &h) {
-  MLLM_RT_ASSERT_EQ(h.shape()[0], 1);
-  MLLM_RT_ASSERT_EQ(h.shape()[1], count);
-  MLLM_RT_ASSERT_EQ(h.shape()[2], hidden_size_);
-  // h_cache_.updateHiddenStateCache(layer_idx, offset, count, h);
+  MLLM_RT_ASSERT(h.shape() == std::vector<int32_t>({1, count, hidden_size_}) && h.dtype() == kFloat32);
+  auto h_ptr = h.cptrAt<mllm_byte_t>({0, 0, 0});
+  auto h_cache_ptr = h_cache_[layer_idx].ptrAt<mllm_byte_t>({offset, 0});
+  std::memcpy(h_cache_ptr, h_ptr, count * hidden_size_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
 }
 
 std::array<Tensor, 2> GenerationState::get_kv(int layer_idx) {
