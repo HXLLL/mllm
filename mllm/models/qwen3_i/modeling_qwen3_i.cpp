@@ -167,41 +167,57 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   const auto& cos_emb = inputs[2];
   const auto& position_ids = inputs[3];
 
-  seq_len_ = token_ids.shape()[1];
-  num_chunks_ = (seq_len_ + chunksize_ - 1) / chunksize_;
-  
-  std::vector<Tensor> chunk_outputs;
-  chunk_outputs.reserve(num_chunks_);
-
-  // Chunked prefill
   int offset = *position_ids.cptrAt<int64_t>({0, 0});
-  for (int i = 0; i < num_chunks_; ++i) {
-    const int chunk_start = i * chunksize_;
-    const int chunk_end = std::min(chunk_start + chunksize_, seq_len_);
-    int len = chunk_end - chunk_start;
 
-    auto x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
-    auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
-    auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
+  if (offset == 0) { // prefill phase
+    std::vector<Tensor> chunk_outputs;
+    auto seq_len = token_ids.shape()[1];
+    auto num_chunks = (seq_len + chunksize_ - 1) / chunksize_;
+    chunk_outputs.reserve(num_chunks);
 
+    // Chunked prefill
+    for (int i = 0; i < num_chunks; ++i) {
+      const int chunk_start = i * chunksize_;
+      const int chunk_end = std::min(chunk_start + chunksize_, seq_len);
+      int len = chunk_end - chunk_start;
+
+      auto x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
+      auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
+      auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
+
+      for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
+        recordEvent<LayerBeginEvent>(j, len, offset);
+        auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
+        auto &h = h2kv_result[0];
+        auto &q = h2kv_result[1];
+        auto &k = h2kv_result[2];
+        auto &v = h2kv_result[3];
+        state_.update_kv(j, offset, len, k, v);
+        x = kv2h_[j](h, q, k, AnyValue(offset))[0];
+        recordEvent<LayerCompleteEvent>(j, len, offset);
+      }
+
+      chunk_outputs.push_back(x);
+      offset += len;
+    }
+    auto output = nn::functional::concat(chunk_outputs, 1);
+
+    return {norm_(output)};
+  } else { // decode phase
+    auto x = embedding_(token_ids);
     for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
-      recordEvent<LayerBeginEvent>(j, len, offset);
-      auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
+      recordEvent<LayerBeginEvent>(j, 1, offset);
+      auto h2kv_result = h2kv_[j](x, sin_emb, cos_emb);
       auto &h = h2kv_result[0];
       auto &q = h2kv_result[1];
       auto &k = h2kv_result[2];
       auto &v = h2kv_result[3];
-      state_.update_kv(j, offset, len, k, v);
+      state_.update_kv(j, offset, 1, k, v);
       x = kv2h_[j](h, q, k, AnyValue(offset))[0];
-      recordEvent<LayerCompleteEvent>(j, len, offset);
+      recordEvent<LayerCompleteEvent>(j, 1, offset);
     }
-
-    chunk_outputs.push_back(x);
-    offset += len;
+    return {norm_(x)};
   }
-
-  auto output = nn::functional::concat(chunk_outputs, 1);
-  return {norm_(output)};
 }
 
 Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, const std::filesystem::path& state_dir)

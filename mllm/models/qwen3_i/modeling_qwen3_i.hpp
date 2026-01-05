@@ -119,8 +119,6 @@ class Qwen3Text final : public nn::Module {
 
   int chunksize_ = 1;
   int num_layers_;
-  int num_chunks_;
-  int seq_len_;
 
   nn::ModuleListWithIdx<Qwen3Decoder> decode_blocks_;
   std::vector<H2KV> h2kv_;
