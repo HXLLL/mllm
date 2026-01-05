@@ -220,6 +220,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
 
 Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx) {
   MLLM_RT_ASSERT_EQ(token_ids.shape()[1], 1);
+  MLLM_INFO("Decoding, token_idx: {}", token_idx);
   auto x = embedding_(token_ids);
   for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
     recordEvent<LayerBeginEvent>(j, 1, token_idx);
@@ -235,9 +236,6 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
   state_.save();
   return norm_(x);
 }
-
-
-
 
 /* ARGeneration Implementation */
 
