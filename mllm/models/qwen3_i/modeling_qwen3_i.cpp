@@ -149,8 +149,8 @@ std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::
 
 /** Qwen3Text Implementation **/
 
-Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state)
-    : nn::Module(name), num_layers_(cfg.num_hidden_layers), state_(state) {
+Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state, int chunk_size)
+    : nn::Module(name), chunk_size_(chunk_size), num_layers_(cfg.num_hidden_layers), state_(state) {
   decode_blocks_ = reg<nn::ModuleListWithIdx<Qwen3Decoder>>("layers", num_layers_, cfg, state);
   for (auto& block : decode_blocks_.list()) {
     h2kv_.emplace_back(block, state_);
@@ -174,14 +174,14 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   if (state_.prefill_done()) { return norm_(state_.get_h(0, 0, seq_len)); }
 
   int64_t offset = 0;
-  auto num_chunks = (seq_len + chunksize_ - 1) / chunksize_;
+  auto num_chunks = (seq_len + chunk_size_ - 1) / chunk_size_;
   std::vector<Tensor> chunk_outputs;
   chunk_outputs.reserve(num_chunks);
 
   MLLM_INFO("Prefilling [{} / {}]", offset, seq_len);
   for (int i = 0; i < num_chunks; ++i) {
-    const int chunk_start = i * chunksize_;
-    const int chunk_end = std::min(chunk_start + chunksize_, seq_len);
+    const int chunk_start = i * chunk_size_;
+    const int chunk_end = std::min(chunk_start + chunk_size_, seq_len);
     int len = chunk_end - chunk_start;
 
     auto x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
@@ -234,8 +234,8 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
 
 /* ARGeneration Implementation */
 
-Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, const std::filesystem::path& state_dir)
-    : cfg_(cfg), state_(GenerationState::create_or_recover(cfg, state_dir)), llm_(reg<Qwen3Text>("model", cfg_, *state_)) {
+Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const InitParams& params)
+    : cfg_(params.cfg), state_(params.state), llm_(reg<Qwen3Text>("model", cfg_, state_, params.chunk_size)) {
   MLLM_INFO("Initializing intermittent Qwen3 model");
 
   eos_token_id_ = cfg_.end_of_text_token_id;
@@ -262,11 +262,11 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
     auto last_pos = *position_ids.cptrAt<int64_t>({0, position_ids.shape()[1] - 1});
     position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
     *position_ids.ptrAt<int64_t>({0, 0}) = last_pos + 1;
-    state_->start_decode(sequence);
+    state_.start_decode(sequence);
   } else {  // prefill phase
     position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
     for (int s = 0; s < seq_len; ++s) { *position_ids.ptrAt<int64_t>({0, s}) = s; }
-    state_->start_prefill(sequence);
+    state_.start_prefill(sequence);
   }
 
   auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
@@ -276,7 +276,7 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
     auto S = sequence.shape()[1];
     auto D = sequence.shape()[2];
     sequence = sequence[{kAll, {S - 1}, kAll}];
-    state_->append_output_token(sequence);
+    state_.append_output_token(sequence);
   }
   if (tie_word_embeddings_) { sequence = lm_head_(sequence); }
 

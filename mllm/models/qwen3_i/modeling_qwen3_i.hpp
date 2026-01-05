@@ -112,15 +112,14 @@ class KV2H : public Task {
 
 class Qwen3Text final : public nn::Module {
  public:
-  Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state);
+  Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state, int chunk_size);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
-  void setChunkSize(int chunksize) { chunksize_ = chunksize; }
 
  private:
   Tensor prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb);
   Tensor decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx);
 
-  int chunksize_ = 1;
+  int chunk_size_;
   int num_layers_;
 
   nn::ModuleListWithIdx<Qwen3Decoder> decode_blocks_;
@@ -133,18 +132,20 @@ class Qwen3Text final : public nn::Module {
 
 class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {
  public:
-  explicit Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, const std::filesystem::path& state_dir);
+  struct InitParams {
+    const Qwen3Config& cfg;
+    GenerationState& state;
+    const int chunk_size;
+  };
+  explicit Qwen3IntermittentForCausalLM(const InitParams& params);
 
   ARGenerationOutputPast forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) override;
   void streamGenerate(const ARGenerationOutputPast& input, const ARGenerationArgs& args,
                       const std::function<void(int64_t)>& callback) override;
 
-  void sync_state();
-  void setChunkSize(int chunksize) { llm_.setChunkSize(chunksize); }
-
  private:
   const Qwen3Config& cfg_;
-  GenerationState::ptr state_;
+  GenerationState& state_;
   Qwen3Text llm_;
   nn::Linear lm_head_;
 
