@@ -18,35 +18,16 @@ struct PairHash {
 
 class GenerationState {
  public:
-  using ptr = std::shared_ptr<GenerationState>;
   using Qwen3Config = models::qwen3::Qwen3Config;
 
-  struct InitParams {
-    std::filesystem::path path;
-    int max_length;
-    int layer_nums;
-    int q_heads;
-    int kv_heads;
-    int kv_dim;
-    int hidden_size;
-    int num_output_tokens;
-    int prefill_done;
-    std::vector<int64_t> input_tokens;
-    Tensor output_tokens;
-    std::vector<Tensor> k_cache;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
-    std::vector<Tensor> v_cache;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
-    std::vector<Tensor> h_cache;  // Shape: [layer_nums + 1, max_cache_length, hidden_size]
+  explicit GenerationState(const Qwen3Config& cfg, const std::filesystem::path& path);
 
-    static InitParams make_default(const Qwen3Config& cfg, const std::filesystem::path& path);
-  };
+  void load();
+  void create();
 
-  explicit GenerationState(InitParams&& params);
+  void start(const Tensor& token_ids);
+  int has_started() const;
 
-  static ptr create_or_recover(const Qwen3Config& cfg, const std::filesystem::path& path);
-  static ptr recover(const Qwen3Config& cfg, const std::filesystem::path& path);
-  static ptr create(const Qwen3Config& cfg, const std::filesystem::path& path);
-
-  void start_prefill(const Tensor& token_ids);
   void start_decode(const Tensor& token_id);
   void append_output_token(const Tensor& token);
 
@@ -73,12 +54,14 @@ class GenerationState {
   int hidden_size_;
   int num_output_tokens_;
   int prefill_done_;
+  int started_;
 
   std::vector<int64_t> input_tokens_;
   Tensor output_tokens_;
-  std::vector<Tensor> k_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
-  std::vector<Tensor> v_cache_;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
-  std::vector<Tensor> h_cache_;  // Shape: [layer_nums + 1, max_cache_length, hidden_size]
+  std::vector<Tensor> k_cache_;  // Shape: [layer_nums, 1, q_heads, max_cache_length, kv_dims]
+  std::vector<Tensor> v_cache_;  // Shape: [layer_nums, 1, q_heads, max_cache_length, kv_dims]
+  std::vector<Tensor> h_cache_;  // Shape: [layer_nums + 1, 1, max_cache_length, hidden_size]
+
   std::unordered_map<std::pair<int, int>, bool, PairHash> dirty;
   std::queue<std::pair<int, int>> dirty_queue;
 };

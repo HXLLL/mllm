@@ -26,17 +26,20 @@ class Qwen3Service {
   };
 
   explicit Qwen3Service(const Config& config)
-      : config_(config), qwen3_cfg_(config.config_path), qwen3_tokenizer_(config.tokenizer_path) {}
+      : config_(config),
+        qwen3_cfg_(config.config_path),
+        qwen3_tokenizer_(config.tokenizer_path),
+        state_(qwen3_cfg_, config.state_path) {}
 
   void load() {
     if (std::filesystem::exists(config_.state_path)) {
       mllm::Timer load_state_timer;
-      state_ = GenerationState::recover(qwen3_cfg_, config_.state_path);
+      state_.load();
       fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
     } else {
-      state_ = GenerationState::create(qwen3_cfg_, config_.state_path);
+      state_.create();
     }
-    model_ = std::make_unique<Model>(qwen3_cfg_, *state_, config_.chunk_size);
+    model_ = std::make_unique<Model>(qwen3_cfg_, state_, config_.chunk_size);
 
     mllm::Timer load_model_timer;
     auto model_params = mllm::load(config_.model_path, config_.file_version, mllm::kCPU, config_.use_mmap);
@@ -54,7 +57,6 @@ class Qwen3Service {
     fmt::print("💬 Prompt text (or 'exit/quit'): ");
 
     std::getline(std::cin, prompt_text);
-
     fmt::print("🔄 Processing...\n");
     inputs = qwen3_tokenizer_.convertMessage({.prompt = prompt_text});
     fmt::print("\n🤖 Response: ");
@@ -83,7 +85,7 @@ class Qwen3Service {
   };
 
   std::unique_ptr<Model> model_;
-  GenerationState::ptr state_;
+  GenerationState state_;
   Config config_;
   mllm::models::qwen3::Qwen3Config qwen3_cfg_;
   mllm::models::qwen3::Qwen3Tokenizer qwen3_tokenizer_;
