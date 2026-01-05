@@ -114,8 +114,8 @@ class Qwen3Text final : public nn::Module {
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
   void setChunkSize(int chunksize) { chunksize_ = chunksize; }
  private:
-  Tensor forward_chunk(int chunk_id, const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_enb,
-                       const Tensor& position_ids);
+  Tensor prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb);
+  Tensor decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx);
 
   int chunksize_ = 1;
   int num_layers_;
