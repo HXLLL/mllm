@@ -26,22 +26,17 @@ class Qwen3Service {
     std::string prompt_text;
     mllm::models::ARGenerationOutputPast inputs;
 
-    try {
-        fmt::print("💬 Prompt text (or 'exit/quit'): ");
-        std::getline(std::cin, prompt_text);
+    fmt::print("💬 Prompt text (or 'exit/quit'): ");
+    std::getline(std::cin, prompt_text);
 
-        fmt::print("🔄 Processing...\n");
-        inputs = qwen3_tokenizer_.convertMessage({.prompt = prompt_text});
-        fmt::print("\n🤖 Response: ");
+    fmt::print("🔄 Processing...\n");
+    inputs = qwen3_tokenizer_.convertMessage({.prompt = prompt_text});
+    fmt::print("\n🤖 Response: ");
 
-      qwen3_.streamGenerate(inputs, {}, [&](int64_t token_id) {
-        std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush;
-      });
+    auto callback = [&](int64_t token_id) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; };
+    qwen3_.streamGenerate(inputs, {}, callback);
 
-      fmt::print("\n{}\n", std::string(60, '-'));
-    } catch (const std::exception& e) { 
-      fmt::print("\n❌ Error: {}\n[Errno] {} ({})\n{}\n", e.what(), errno, std::strerror(errno), std::string(60, '-'));
-    }
+    fmt::print("\n{}\n", std::string(60, '-'));
 
     qwen3_.perfSummary();
   }
@@ -90,8 +85,12 @@ MLLM_MAIN({
 
   std::filesystem::path cache_path = std::filesystem::path(cache_dir.get());
 
-  Qwen3Service qwen3_service(model_path.get(), tokenizer_path.get(), config_path.get(), cache_dir.get(), file_version);
-  qwen3_service.run();
+  try {
+    Qwen3Service qwen3_service(model_path.get(), tokenizer_path.get(), config_path.get(), cache_dir.get(), file_version);
+    qwen3_service.run();
+  } catch (const std::exception& e) { 
+    fmt::print("\n❌ Error: {}\n[Errno] {} ({})\n{}\n", e.what(), errno, std::strerror(errno), std::string(60, '-'));
+  }
 
 #ifdef MLLM_PERFETTO_ENABLE
   mllm::perf::stop();
