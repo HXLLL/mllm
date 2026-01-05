@@ -16,16 +16,16 @@ class Qwen3Service {
   using GenerationState = mllm::models::qwen3_i::GenerationState;
 
   struct Config {
-    const std::string& model_path;
-    const std::string& tokenizer_path;
-    const std::string& config_path;
-    const std::string& state_path;
+    std::string model_path;
+    std::string tokenizer_path;
+    std::string config_path;
+    std::string state_path;
     mllm::ModelFileVersion file_version;
     int32_t chunk_size;
     bool use_mmap;
   };
 
-  explicit Qwen3Service(const Config& config)
+  explicit Qwen3Service(Config&& config)
       : config_(config),
         qwen3_cfg_(config.config_path),
         qwen3_tokenizer_(config.tokenizer_path),
@@ -90,12 +90,11 @@ class Qwen3Service {
     for (int64_t token_id : tokens) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; }
   };
 
-  std::unique_ptr<Model> model_;
-  GenerationState state_;
   Config config_;
   mllm::models::qwen3::Qwen3Config qwen3_cfg_;
   mllm::models::qwen3::Qwen3Tokenizer qwen3_tokenizer_;
-  std::filesystem::path cache_path_;
+  std::unique_ptr<Model> model_;
+  GenerationState state_;
 };
 
 MLLM_MAIN({
