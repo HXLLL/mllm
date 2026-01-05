@@ -30,6 +30,7 @@ class GenerationState {
     int kv_dim;
     int hidden_size;
     int num_output_tokens;
+    int prefill_done;
     std::vector<int64_t> input_tokens;
     Tensor output_tokens;
     std::vector<Tensor> k_cache;  // Shape: [layer_nums, q_heads, max_cache_length, kv_dims]
@@ -47,16 +48,19 @@ class GenerationState {
 
   void start_prefill(const Tensor& token_ids);
   void start_decode(const Tensor& token_id);
-  void prefill_done();
   void append_output_token(const Tensor& token);
+
+  void set_prefill_done();
+  [[nodiscard]] int prefill_done() const;
 
   void save() const;
 
   void update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v);
-  void update_h(int layer_idx, int offset, int count, const Tensor &h);
   [[nodiscard]] std::array<Tensor, 2>get_kv(int layer_idx);
   [[nodiscard]] std::array<Tensor, 2>get_kv(int layer_idx, int offset, int count);
-  void clear();
+
+  void update_h(int layer_idx, int offset, int count, const Tensor &h);
+  Tensor get_h(int layer_idx, int offset, int count);
 
  private:
   std::filesystem::path path_;

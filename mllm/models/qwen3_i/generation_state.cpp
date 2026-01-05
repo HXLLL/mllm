@@ -8,7 +8,10 @@
 
 namespace mllm::models::qwen3_i {
 
-GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen3Config& cfg, const std::filesystem::path& path) {
+namespace fs = std::filesystem;
+
+GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen3Config& cfg,
+                                                                      const fs::path& path) {
   return {
       .path = path,
       .max_length = cfg.max_cache_length,
@@ -18,6 +21,7 @@ GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen
       .kv_dim = cfg.head_dim,
       .hidden_size = cfg.hidden_size,
       .num_output_tokens = 0,
+      .prefill_done = false,
       .input_tokens = {},
       .output_tokens = {},
       .k_cache = {},
@@ -26,47 +30,79 @@ GenerationState::InitParams GenerationState::InitParams::make_default(const Qwen
   };
 }
 
-GenerationState::ptr GenerationState::create_or_recover(const Qwen3Config& cfg, const std::filesystem::path& path) {
-  if (std::filesystem::exists(path)) {
+GenerationState::GenerationState(InitParams&& params)
+    : path_(params.path),
+      max_length_(params.max_length),
+      layer_nums_(params.layer_nums),
+      q_heads_(params.q_heads),
+      kv_heads_(params.kv_heads),
+      kv_dim_(params.kv_dim),
+      hidden_size_(params.hidden_size),
+      num_output_tokens_(params.num_output_tokens),
+      prefill_done_(params.prefill_done),
+      input_tokens_(std::move(params.input_tokens)),
+      output_tokens_(std::move(params.output_tokens)),
+      k_cache_(std::move(params.k_cache)),
+      v_cache_(std::move(params.v_cache)),
+      h_cache_(std::move(params.h_cache)) {}
+
+GenerationState::ptr GenerationState::create_or_recover(const Qwen3Config& cfg, const fs::path& path) {
+  if (fs::exists(path)) {
     return recover(cfg, path);
   } else {
     return create(cfg, path);
   }
 }
 
-GenerationState::ptr GenerationState::recover(const Qwen3Config& cfg, const std::filesystem::path& path) {
+template <typename... Args>
+static inline std::ofstream open_ofstream(const fs::path& path, Args&&... args) {
+  std::ofstream ofs;
+  ofs.open(path, std::forward<Args>(args)...);
+  if (!ofs.is_open()) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {} for writing", path.string()); }
+  return ofs;
+}
+
+template <typename... Args>
+static inline std::ifstream open_ifstream(const fs::path& path, Args&&... args) {
+  std::ifstream ifs;
+  ifs.open(path, std::forward<Args>(args)...);
+  if (!ifs.is_open()) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {} for reading", path.string()); }
+  return ifs;
+}
+
+GenerationState::ptr GenerationState::recover(const Qwen3Config& cfg, const fs::path& path) {
   MLLM_INFO("GenerationState: Recovering state from {}", path.string());
   
-  std::ifstream metadata_file(path / "metadata.json");
+  auto metadata_file = open_ifstream(path / "metadata.json");
   nlohmann::json json_data;
   metadata_file >> json_data;
   metadata_file.close();
   
-  int num_output_tokens = json_data.value("num_output_tokens", 0);
-  int max_length = json_data.value("max_length", cfg.max_cache_length);
-  int layer_nums = json_data.value("layer_nums", cfg.num_hidden_layers);
-  int q_heads = json_data.value("q_heads", cfg.num_attention_heads);
-  int kv_heads = json_data.value("kv_heads", cfg.num_key_value_heads);
-  int kv_dim = json_data.value("kv_dim", cfg.head_dim);
-  int hidden_size = json_data.value("hidden_size", cfg.hidden_size);
-  std::vector<int64_t> input_tokens = json_data.value("input_tokens", std::vector<int64_t>());
-  
   auto params = InitParams::make_default(cfg, path);
-  params.num_output_tokens = num_output_tokens;
-  params.max_length = max_length;
-  params.layer_nums = layer_nums;
-  params.q_heads = q_heads;
-  params.kv_heads = kv_heads;
-  params.kv_dim = kv_dim;
-  params.hidden_size = hidden_size;
-  params.input_tokens = input_tokens;
+  params.num_output_tokens = json_data["num_output_tokens"];
+  params.max_length = json_data["max_length"];
+  params.layer_nums = json_data["layer_nums"];
+  params.q_heads = json_data["q_heads"];
+  params.kv_heads = json_data["kv_heads"];
+  params.kv_dim = json_data["kv_dim"];
+  params.hidden_size = json_data["hidden_size"];
+  params.prefill_done = json_data["prefill_done"];
+  params.input_tokens = json_data.at("input_tokens").get<std::vector<int64_t>>();
   
+  auto max_length = params.max_length;
+  auto hidden_size = params.hidden_size;
+  auto layer_nums = params.layer_nums;
+  auto q_heads = params.q_heads;
+  auto kv_heads = params.kv_heads;
+  auto kv_dim = params.kv_dim;
+  auto num_output_tokens = params.num_output_tokens;
+
   params.output_tokens = Tensor::empty({max_length, hidden_size}, kFloat32, kCPU).alloc();
-  std::ifstream output_tokens_file(path / "output_tokens.bin", std::ios::binary);
+  auto output_tokens_file = open_ifstream(path / "output_tokens.bin", std::ios::binary);
   auto out_ptr = params.output_tokens.ptrAt<char>({0, 0});
   output_tokens_file.read(out_ptr, num_output_tokens * hidden_size * sizeof(float_t));
   
-  std::ifstream kv_cache_file(path / "kv_cache.bin", std::ios::binary);
+  auto kv_cache_file = open_ifstream(path / "kv_cache.bin", std::ios::binary);
 
   params.k_cache.reserve(layer_nums);
   for (int i = 0; i < layer_nums; ++i) {
@@ -82,7 +118,7 @@ GenerationState::ptr GenerationState::recover(const Qwen3Config& cfg, const std:
   }
   kv_cache_file.close();
   
-  std::ifstream h_cache_file(path / "h_cache.bin", std::ios::binary);
+  auto h_cache_file = open_ifstream(path / "h_cache.bin", std::ios::binary);
   params.h_cache.reserve(layer_nums + 1);
   for (int i = 0; i < layer_nums + 1; ++i) {
     params.h_cache.emplace_back(Tensor::empty({max_length, hidden_size}, kFloat32, kCPU).alloc());
@@ -94,7 +130,7 @@ GenerationState::ptr GenerationState::recover(const Qwen3Config& cfg, const std:
   return std::make_shared<GenerationState>(std::move(params));
 }
 
-GenerationState::ptr GenerationState::create(const Qwen3Config& cfg, const std::filesystem::path& path) {
+GenerationState::ptr GenerationState::create(const Qwen3Config& cfg, const fs::path& path) {
   MLLM_INFO("GenerationState: Creating state at {}", path.string());
   auto layer_nums = cfg.num_hidden_layers;
 
@@ -125,8 +161,12 @@ void GenerationState::start_decode(const Tensor& token_id) {
   MLLM_RT_ASSERT(token_id.shape() == std::vector<int32_t>({1, 1}) && token_id.dtype() == kInt64);
 }
 
-void GenerationState::prefill_done() {
-  prefill_done_ = true;
+int GenerationState::prefill_done() const {
+  return prefill_done_;
+}
+
+void GenerationState::set_prefill_done() {
+  prefill_done_ = 1;
 }
 
 void GenerationState::append_output_token(const Tensor& token) {
@@ -138,6 +178,10 @@ void GenerationState::append_output_token(const Tensor& token) {
 }
 
 void GenerationState::save() const {
+  if (!fs::exists(path_)) {
+    fs::create_directories(path_); // 递归创建
+  }
+
   nlohmann::json json_data;
   json_data["num_output_tokens"] = num_output_tokens_;
   json_data["max_length"] = max_length_;
@@ -147,24 +191,25 @@ void GenerationState::save() const {
   json_data["kv_dim"] = kv_dim_;
   json_data["hidden_size"] = hidden_size_;
   json_data["input_tokens"] = input_tokens_;
+  json_data["prefill_done"] = prefill_done_;
 
-  std::ofstream metadata_file(path_ / "metadata.json");
+  auto metadata_file = open_ofstream(path_ / "metadata.json");
   metadata_file << json_data.dump(2);
   metadata_file.close();
 
-  std::ofstream output_tokens_file(path_ / "output_tokens.bin", std::ios::binary);
+  auto output_tokens_file = open_ofstream(path_ / "output_tokens.bin", std::ios::binary);
   auto out_ptr = output_tokens_.cptrAt<char>({0, 0});
   output_tokens_file.write(out_ptr, num_output_tokens_ * hidden_size_ * sizeof(float_t));
   output_tokens_file.close();
 
-  std::ofstream h_cache_file(path_ / "h_cache.bin", std::ios::binary);
+  auto h_cache_file = open_ofstream(path_ / "h_cache.bin", std::ios::binary);
   for (int i = 0; i < layer_nums_; ++i) {
     auto h_ptr = h_cache_[i].cptrAt<char>({0, 0});
     h_cache_file.write(h_ptr, max_length_ * hidden_size_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
   }
   h_cache_file.close();
 
-  std::ofstream kv_cache_file(path_ / "kv_cache.bin", std::ios::binary);
+  auto kv_cache_file = open_ofstream(path_ / "kv_cache.bin", std::ios::binary);
   for (int i = 0; i < layer_nums_; ++i) {
     auto k_ptr = k_cache_[i].cptrAt<char>({0, 0, 0});
     kv_cache_file.write(k_ptr, max_length_ * kv_heads_ * kv_dim_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
@@ -199,6 +244,10 @@ void GenerationState::update_h(int layer_idx, int offset, int count, const Tenso
   auto h_ptr = h.cptrAt<mllm_byte_t>({0, 0, 0});
   auto h_cache_ptr = h_cache_[layer_idx].ptrAt<mllm_byte_t>({offset, 0});
   std::memcpy(h_cache_ptr, h_ptr, count * hidden_size_ * bytesOfType(kFloat32) / lanesOfType(kFloat32));
+}
+
+Tensor GenerationState::get_h(int layer_idx, int offset, int count) {
+  return h_cache_[layer_idx][{{offset, offset + count}, kAll}];
 }
 
 std::array<Tensor, 2> GenerationState::get_kv(int layer_idx) {
