@@ -29,11 +29,12 @@ class Qwen3MLP final : public nn::Module {
 
 class Qwen3Decoder final : public nn::Module {
  public:
-  Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, GenerationState &state, int idx);
+  Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, GenerationState& state, int idx);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 
   friend class H2KV;
   friend class KV2H;
+
  private:
   int layer_idx_;
   int hidden_size_;
@@ -58,10 +59,10 @@ class Qwen3Decoder final : public nn::Module {
   Qwen3MLP mlp_;
   nn::RMSNorm input_layer_norm_;
   nn::RMSNorm post_attention_layer_norm_;
-  GenerationState &state_;
+  GenerationState& state_;
 };
 
-class Task: public nn::Module {
+class Task : public nn::Module {
  public:
   Task() = default;
   explicit Task(const std::string& name) : nn::Module(name) {}
@@ -69,8 +70,9 @@ class Task: public nn::Module {
 
 class H2KV : public Task {
  public:
-  explicit H2KV(Qwen3Decoder& decoder, GenerationState &state);
+  explicit H2KV(Qwen3Decoder& decoder, GenerationState& state);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
+
  private:
   int layer_idx_;
   int hidden_size_;
@@ -79,40 +81,41 @@ class H2KV : public Task {
   int num_key_value_heads_;
   int num_key_value_groups_;
 
-  nn::RMSNorm &input_layer_norm_;
-  nn::Linear &q_proj_;
-  nn::Linear &k_proj_;
-  nn::Linear &v_proj_;
-  nn::RMSNorm &rms_norm_q_;
-  nn::RMSNorm &rms_norm_k_;
-  nn::RoPE &q_rope_;
-  nn::RoPE &k_rope_;
-  GenerationState &state_;
+  nn::RMSNorm& input_layer_norm_;
+  nn::Linear& q_proj_;
+  nn::Linear& k_proj_;
+  nn::Linear& v_proj_;
+  nn::RMSNorm& rms_norm_q_;
+  nn::RMSNorm& rms_norm_k_;
+  nn::RoPE& q_rope_;
+  nn::RoPE& k_rope_;
+  GenerationState& state_;
 };
 
 class KV2H : public Task {
  public:
-  explicit KV2H(Qwen3Decoder& decoder, GenerationState &state);
+  explicit KV2H(Qwen3Decoder& decoder, GenerationState& state);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
+
  private:
   int layer_idx_;
   int head_dim_;
   int num_attention_heads_;
 
-  nn::Linear &o_proj_;
-  nn::CausalMask &mask_;
-  nn::Softmax &softmax_;
-  Qwen3MLP &mlp_;
-  nn::RMSNorm &post_attention_layer_norm_;
-  GenerationState &state_;
+  nn::Linear& o_proj_;
+  nn::CausalMask& mask_;
+  nn::Softmax& softmax_;
+  Qwen3MLP& mlp_;
+  nn::RMSNorm& post_attention_layer_norm_;
+  GenerationState& state_;
 };
-
 
 class Qwen3Text final : public nn::Module {
  public:
-  Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState &state);
+  Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
   void setChunkSize(int chunksize) { chunksize_ = chunksize; }
+
  private:
   Tensor prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb);
   Tensor decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx);
@@ -125,7 +128,7 @@ class Qwen3Text final : public nn::Module {
   std::vector<KV2H> kv2h_;
   nn::RMSNorm norm_;
   nn::Embedding embedding_;
-  GenerationState &state_;
+  GenerationState& state_;
 };
 
 class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {

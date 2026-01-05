@@ -62,13 +62,11 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, Gene
   post_attention_layer_norm_ = reg<nn::RMSNorm>("post_attention_layernorm", cfg.rms_norm_eps);
 }
 
-std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
-  return {};
-}
+std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) { return {}; }
 
 /** Layer Tasks Implementation */
 
-H2KV::H2KV(Qwen3Decoder& decoder, GenerationState &state)
+H2KV::H2KV(Qwen3Decoder& decoder, GenerationState& state)
     : input_layer_norm_(decoder.input_layer_norm_),
       q_proj_(decoder.q_proj_),
       k_proj_(decoder.k_proj_),
@@ -112,7 +110,7 @@ std::vector<Tensor> H2KV::forward(const std::vector<Tensor>& inputs, const std::
   return { hidden_states, query, key, value };
 }
 
-KV2H::KV2H(Qwen3Decoder& decoder, GenerationState &state)
+KV2H::KV2H(Qwen3Decoder& decoder, GenerationState& state)
     : o_proj_(decoder.o_proj_),
       mask_(decoder.mask_),
       softmax_(decoder.softmax_),
@@ -121,8 +119,7 @@ KV2H::KV2H(Qwen3Decoder& decoder, GenerationState &state)
       layer_idx_(decoder.layer_idx_),
       head_dim_(decoder.head_dim_),
       num_attention_heads_(decoder.num_attention_heads_),
-      state_(state)
-       {}
+      state_(state) {}
 
 std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
   const auto& hidden_states = inputs[0];
@@ -174,9 +171,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 
 Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb) {
   auto seq_len = token_ids.shape()[1];
-  if (state_.prefill_done()) {
-    return norm_(state_.get_h(0, 0, seq_len));
-  }
+  if (state_.prefill_done()) { return norm_(state_.get_h(0, 0, seq_len)); }
 
   int64_t offset = 0;
   auto num_chunks = (seq_len + chunksize_ - 1) / chunksize_;
@@ -197,10 +192,10 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
     for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
       recordEvent<LayerBeginEvent>(j, len, offset);
       auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
-      auto &h = h2kv_result[0];
-      auto &q = h2kv_result[1];
-      auto &k = h2kv_result[2];
-      auto &v = h2kv_result[3];
+      auto& h = h2kv_result[0];
+      auto& q = h2kv_result[1];
+      auto& k = h2kv_result[2];
+      auto& v = h2kv_result[3];
       state_.update_kv(j, offset, len, k, v);
       x = kv2h_[j](h, q, k, AnyValue(offset))[0];
       recordEvent<LayerCompleteEvent>(j, len, offset);
@@ -225,10 +220,10 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
   for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
     recordEvent<LayerBeginEvent>(j, 1, token_idx);
     auto h2kv_result = h2kv_[j](x, sin_emb, cos_emb);
-    auto &h = h2kv_result[0];
-    auto &q = h2kv_result[1];
-    auto &k = h2kv_result[2];
-    auto &v = h2kv_result[3];
+    auto& h = h2kv_result[0];
+    auto& q = h2kv_result[1];
+    auto& k = h2kv_result[2];
+    auto& v = h2kv_result[3];
     state_.update_kv(j, token_idx, 1, k, v);
     x = kv2h_[j](h, q, k, AnyValue(token_idx))[0];
     recordEvent<LayerCompleteEvent>(j, 1, token_idx);
@@ -261,14 +256,14 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
   auto seq_len = sequence.shape()[1];
 
   Tensor position_ids;
-  if (input.count("position_ids")) { // decode phase
+  if (input.count("position_ids")) {  // decode phase
     position_ids = input.at("position_ids");
     MLLM_RT_ASSERT_EQ(seq_len, 1);
     auto last_pos = *position_ids.cptrAt<int64_t>({0, position_ids.shape()[1] - 1});
     position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
     *position_ids.ptrAt<int64_t>({0, 0}) = last_pos + 1;
     state_->start_decode(sequence);
-  } else { // prefill phase
+  } else {  // prefill phase
     position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
     for (int s = 0; s < seq_len; ++s) { *position_ids.ptrAt<int64_t>({0, s}) = s; }
     state_->start_prefill(sequence);
