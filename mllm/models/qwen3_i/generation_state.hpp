@@ -2,7 +2,6 @@
 
 #include <queue>
 #include <unordered_map>
-#include <unordered_map>
 #include "mllm/core/Tensor.hpp"
 #include "mllm/mllm.hpp"
 #include "mllm/models/qwen3/configuration_qwen3.hpp"
@@ -48,10 +47,10 @@ class GenerationState {
 
   void start_prefill(const Tensor& token_ids);
   void start_decode(const Tensor& token_id);
+  void prefill_done();
   void append_output_token(const Tensor& token);
 
   void save() const;
-  void sync_cache();
 
   void update_kv(int layer_idx, int offset, int count, const Tensor &k, const Tensor &v);
   void update_h(int layer_idx, int offset, int count, const Tensor &h);
@@ -69,6 +68,7 @@ class GenerationState {
   int kv_dim_;
   int hidden_size_;
   int num_output_tokens_;
+  int prefill_done_;
 
   std::vector<int64_t> input_tokens_;
   Tensor output_tokens_;
