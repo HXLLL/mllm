@@ -39,7 +39,9 @@ class Qwen3Service {
       });
 
       fmt::print("\n{}\n", std::string(60, '-'));
-    } catch (const std::exception& e) { fmt::print("\n❌ Error: {}\n{}\n", e.what(), std::string(60, '-')); }
+    } catch (const std::exception& e) { 
+      fmt::print("\n❌ Error: {}\n[Errno] {} ({})\n{}\n", e.what(), errno, std::strerror(errno), std::string(60, '-'));
+    }
 
     qwen3_.perfSummary();
   }
