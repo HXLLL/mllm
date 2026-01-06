@@ -31,6 +31,7 @@ This is an experimental/academic project, not user-facing software. Optimize for
 
 - **Short code is better**: Short code implies simple logic and is faster to review. Avoid verbose abstractions.
 - **No excessive error handling**: Skip edge cases that won't happen in practice. Basic asserts are fine; elaborate recovery logic is not.
+- **No backward-compatibility code**: State files, configs, etc. are deleted between tests. Don't add version checks, optional field handling, or migration logic.
 - **No polished UIs**: Command-line tools with minimal output are sufficient.
 - **Main purpose first**: Implement the core functionality. Don't add "nice-to-have" features, configurability, or defensive code unless explicitly needed.
 - **Maintainability through simplicity**: Fewer lines = fewer bugs = easier to understand and modify.
