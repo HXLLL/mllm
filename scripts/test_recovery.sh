@@ -4,41 +4,36 @@
 MODEL_DIR="/home/xiaolong/llms/Qwen3-0.6B-w4a32kai"
 STATE_DIR="./data/qwen3-test-recovery"
 RUNNER="./build/bin/mllm-qwen3-runner"
+CHUNK_SIZE=4
 
-PROMPT="Explain the theory of relativity in simple terms. Start with special relativity and then move on to general relativity. Be thorough."
+PROMPT="You are a helpful assistant. Write a short poem about coding. "
 
 run_cmd() {
     timeout --signal=INT "$1" "$RUNNER" \
         -m "$MODEL_DIR/model.mllm" \
         -c "$MODEL_DIR/config.json" \
         -t "$MODEL_DIR/tokenizer.json" \
-        -mv v2 --state_path "$STATE_DIR" -cs 32
+        -mv v2 --state_path "$STATE_DIR" -cs "$CHUNK_SIZE"
 }
 
-# Clean state completely (don't pre-create, let the app create it)
+echo "========================================="
+echo "Test A: Prefill Resume"
+echo "========================================="
 rm -rf "$STATE_DIR"
 
-echo "=== Test 1: Initial run (with input, interrupted) ==="
-run_cmd 20 <<< "$PROMPT"
-echo ""
+echo "=== Run 1: Interrupt during prefill ==="
+run_cmd 10 <<< "$PROMPT"
 echo "Exit code: $?"
+echo ""
 
-echo ""
-echo "=== Test 2: Recovery run (no input needed, resumes from saved state) ==="
-run_cmd 15
-echo ""
+echo "=== Run 2: Resume from prefill ==="
+run_cmd 20
 echo "Exit code: $?"
+echo ""
 
-echo ""
-echo "=== Test 3: Second recovery (continues from Test 2) ==="
-run_cmd 15
-echo ""
+echo "=== Run 3: Resume from decode ==="
+run_cmd 30
 echo "Exit code: $?"
-
 echo ""
-echo "=== Verification ==="
-echo "Check above output:"
-echo "  - Run 1 should show 'Prefilling [X / Y]' logs"
-echo "  - Run 2 should NOT show 'Prefilling' logs (prefill skipped)"
-echo "  - Run 2 should replay Run 1's tokens then continue generating"
+
 echo "=== Done ==="
