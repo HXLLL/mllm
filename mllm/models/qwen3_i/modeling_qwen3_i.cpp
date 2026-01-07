@@ -209,7 +209,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
 }
 
 Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int token_idx) {
-  if (state_.isPositionComplete(token_idx)) { return state_.getH(num_layers_, token_idx, 1); }
+  if (state_.isPositionComplete(token_idx)) { return norm_(state_.getH(num_layers_, token_idx, 1)); }
 
   MLLM_RT_ASSERT_EQ(token_ids.shape()[1], 1);
   auto x = embedding_(token_ids);
@@ -292,7 +292,7 @@ void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& 
   bool do_sample = args.count("do_sample") ? args.at("do_sample").get<bool>() : do_sample_;
   bool use_sampling = do_sample || (temperature != 1.0f) || (top_k > 0) || (top_p > 0.0f);
 
-  auto predict_next_token = [&, this](Tensor& logits) {
+  auto predict_next_token = [&](Tensor& logits) {
     if (use_sampling) {
       if (top_k > 0) {
         return sampleTopK(logits, top_k, temperature);
