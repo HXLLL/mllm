@@ -42,7 +42,8 @@ class GenerationState {
   // Returns count=0 if nothing needs to be written.
   std::pair<int, int> findWriteRange(const std::function<bool(int)>& shouldWrite) const;
 
-  void writeHCacheLayer(std::fstream& file, int layer);
+  // Returns the total number of elements written
+  int writeHCacheLayer(std::fstream& file, int layer);
   void writeKVCacheLayer(std::fstream& file, const Tensor& cache, int layer);
 
   void loadMetadata();

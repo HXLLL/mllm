@@ -198,6 +198,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
       x = kv2h_[j](h, q, k, AnyValue(chunk_start))[0];
       recordEvent<LayerCompleteEvent>(j, len, chunk_start);
       state_.updateH(j + 1, chunk_start, len, x);
+      state_.checkpoint();
     }
 
     state_.checkpoint();

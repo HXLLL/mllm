@@ -7,6 +7,7 @@
 #include "mllm/utils/Log.hpp"
 
 #include "mllm/models/qwen3_i/generation_state.hpp"
+#include "mllm/models/qwen3_i/qwen3_events.hpp"
 
 namespace mllm::models::qwen3_i {
 
@@ -160,16 +161,17 @@ std::pair<int, int> GenerationState::findWriteRange(const std::function<bool(int
   return {start_pos, pos - start_pos};
 }
 
-void GenerationState::writeHCacheLayer(std::fstream& file, int layer) {
+int GenerationState::writeHCacheLayer(std::fstream& file, int layer) {
   auto [start_pos, count] =
       findWriteRange([&](int pos) { return layer_watermark_[pos] >= layer && last_saved_watermark_[pos] < layer; });
-  if (count == 0) return;
+  if (count == 0) return 0;
   size_t h_entry_size = hidden_size_ * ELEMENT_SIZE;
   size_t layer_stride = static_cast<size_t>(layer) * max_length_ * h_entry_size;
   size_t offset = layer_stride + static_cast<size_t>(start_pos) * h_entry_size;
   file.seekp(offset);
   auto ptr = h_cache_[layer].cptrAt<char>({0, start_pos, 0});
   file.write(ptr, count * h_entry_size);
+  return count;
 }
 
 void GenerationState::writeKVCacheLayer(std::fstream& file, const Tensor& cache, int layer) {
@@ -189,11 +191,15 @@ void GenerationState::writeKVCacheLayer(std::fstream& file, const Tensor& cache,
 }
 
 void GenerationState::checkpoint() {
+  Context::instance().tracer()->record<CheckpointBeginEvent>();
+
   if (!fs::exists(path_)) {
     fs::create_directories(path_);
   }
 
   saveMetadata();
+
+  int count = 0;
 
   // Write data files with layer-major sequential writes
   {
@@ -201,12 +207,10 @@ void GenerationState::checkpoint() {
     auto v_cache_file = open_fstream(path_ / "v_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
     auto h_cache_file = open_fstream(path_ / "h_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
 
-    // Write H cache: watermark N means H[0..N] are valid
     for (int layer = 0; layer <= layer_nums_; ++layer) {
-      writeHCacheLayer(h_cache_file, layer);
+      count += writeHCacheLayer(h_cache_file, layer);
     }
 
-    // Write K/V cache: watermark N means K/V[0..N-1] are valid
     for (int layer = 0; layer < layer_nums_; ++layer) {
       writeKVCacheLayer(k_cache_file, k_cache_[layer], layer);
       writeKVCacheLayer(v_cache_file, v_cache_[layer], layer);
@@ -231,6 +235,8 @@ void GenerationState::checkpoint() {
   fsync_path(path_ / "layer_watermark.bin");
 
   last_saved_watermark_ = layer_watermark_;
+
+  Context::instance().tracer()->record<CheckpointCompleteEvent>(count);
 }
 
 void GenerationState::start(const Tensor& token_ids) {

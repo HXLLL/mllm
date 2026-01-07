@@ -62,9 +62,23 @@ struct SyncCompleteEvent final : public LayerEvent<SyncCompleteEvent> {
   static constexpr const char* kTypeName = "SyncComplete";
 };
 
+struct CheckpointBeginEvent final : public Event {
+  [[nodiscard]] std::map<std::string, std::string> toData() const override { return {}; }
+  [[nodiscard]] const char* typeName() const noexcept override { return "CheckpointBegin"; }
+};
+
+struct CheckpointCompleteEvent final : public Event {
+  explicit CheckpointCompleteEvent(int count) : count_(count) {}
+  [[nodiscard]] std::map<std::string, std::string> toData() const override { return {{"count", std::to_string(count_)}}; }
+  [[nodiscard]] const char* typeName() const noexcept override { return "CheckpointComplete"; }
+ private:
+  int count_;
+};
+
 template<typename EventType>
 static inline void recordEvent(int layer_idx, int seq_len, int token_idx) {
   Context::instance().tracer()->record<EventType>(layer_idx, seq_len, token_idx);
 }
+
 
 }  // namespace mllm::models::qwen3_i
