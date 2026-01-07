@@ -8,14 +8,6 @@
 
 namespace mllm::models::qwen3_i {
 
-struct PairHash {
-  std::size_t operator()(const std::pair<int, int>& p) const noexcept {
-    uint64_t hi = static_cast<uint32_t>(p.first);
-    uint64_t lo = static_cast<uint32_t>(p.second);
-    return std::hash<uint64_t>{}((hi << 32) | lo);
-  }
-};
-
 class GenerationState {
  public:
   using Qwen3Config = models::qwen3::Qwen3Config;
@@ -24,8 +16,7 @@ class GenerationState {
 
   void load();
   void create();
-  void save() const;
-  void sync_cache() const;
+  void checkpoint();
 
   void start(const Tensor& token_ids);
   [[nodiscard]] int hasStarted() const;
@@ -61,14 +52,12 @@ class GenerationState {
   int started_ = 0;
 
   std::vector<int8_t> layer_watermark_;  // -1 = not computed, N = h_cache_[0..N] valid
+  std::vector<int8_t> last_saved_watermark_;  // tracks what's been persisted
 
   std::vector<int64_t> input_tokens_;
   std::vector<Tensor> k_cache_;  // Shape: [layer_nums, 1, q_heads, max_cache_length, kv_dims]
   std::vector<Tensor> v_cache_;  // Shape: [layer_nums, 1, q_heads, max_cache_length, kv_dims]
   std::vector<Tensor> h_cache_;  // Shape: [layer_nums + 1, 1, max_cache_length, hidden_size]
-
-  std::unordered_map<std::pair<int, int>, bool, PairHash> dirty;
-  std::queue<std::pair<int, int>> dirty_queue;
 };
 
 }  // namespace mllm::models::qwen3_i

@@ -200,7 +200,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
       state_.updateH(j + 1, chunk_start, len, x);
     }
 
-    state_.sync_cache();
+    state_.checkpoint();
     chunk_outputs.push_back(norm_(x));
   }
 
@@ -226,7 +226,7 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
     state_.updateH(j + 1, token_idx, 1, x);
   }
   auto output = norm_(x);
-  state_.sync_cache();
+  state_.checkpoint();
   return output;
 }
 

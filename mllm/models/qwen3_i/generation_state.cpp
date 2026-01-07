@@ -1,5 +1,7 @@
 #include <fstream>
 #include <filesystem>
+#include <fcntl.h>
+#include <unistd.h>
 #include <nlohmann/json.hpp>
 #include "mllm/utils/Common.hpp"
 #include "mllm/utils/Log.hpp"
@@ -10,20 +12,48 @@ namespace mllm::models::qwen3_i {
 
 namespace fs = std::filesystem;
 
-template<typename... Args>
-static inline std::ofstream open_ofstream(const fs::path& path, Args&&... args) {
-  std::ofstream ofs;
-  ofs.open(path, std::forward<Args>(args)...);
-  if (!ofs.is_open()) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {} for writing", path.string()); }
-  return ofs;
+template<typename StreamType>
+static inline StreamType open_stream_impl(const fs::path& path, const char* op_desc, auto&&... args) {
+  StreamType stream;
+  stream.open(path, std::forward<decltype(args)>(args)...);
+  if (!stream.is_open()) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {} for {}", path.string(), op_desc);
+  }
+  return stream;
 }
 
 template<typename... Args>
 static inline std::ifstream open_ifstream(const fs::path& path, Args&&... args) {
-  std::ifstream ifs;
-  ifs.open(path, std::forward<Args>(args)...);
-  if (!ifs.is_open()) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {} for reading", path.string()); }
-  return ifs;
+  return open_stream_impl<std::ifstream>(path, "reading", std::forward<Args>(args)...);
+}
+
+template<typename... Args>
+static inline std::ofstream open_ofstream(const fs::path& path, Args&&... args) {
+  return open_stream_impl<std::ofstream>(path, "writing", std::forward<Args>(args)...);
+}
+
+template<typename... Args>
+static inline std::fstream open_fstream(const fs::path& path, Args&&... args) {
+  return open_stream_impl<std::fstream>(path, "read-write", std::forward<Args>(args)...);
+}
+
+static inline void preallocate_cache_file(const fs::path& dir, const std::string& filename, size_t size) {
+  if (!fs::exists(dir)) {
+    fs::create_directories(dir);
+  }
+
+  auto filepath = dir / filename;
+  int fd = open(filepath.c_str(), O_CREAT | O_WRONLY, 0644);
+  if (fd < 0) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to create file {}", filepath.string());
+  }
+
+  if (fallocate(fd, 0, 0, size) != 0) {
+    close(fd);
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to preallocate {} bytes for {}", size, filepath.string());
+  }
+
+  close(fd);
 }
 
 GenerationState::GenerationState(const Qwen3Config& cfg, const fs::path& path)
@@ -46,6 +76,8 @@ void GenerationState::load() {
     auto watermark_file = open_ifstream(path_ / "layer_watermark.bin", std::ios::binary);
     watermark_file.read(reinterpret_cast<char*>(layer_watermark_.data()), max_length_);
   }
+
+  last_saved_watermark_ = layer_watermark_;
 
   {
     auto kv_cache_file = open_ifstream(path_ / "kv_cache.bin", std::ios::binary);
@@ -78,6 +110,8 @@ void GenerationState::load() {
 void GenerationState::create() {
   input_tokens_ = {};
   layer_watermark_.assign(max_length_, -1);
+  last_saved_watermark_.assign(max_length_, -1);
+
   k_cache_.reserve(layer_nums_);
   v_cache_.reserve(layer_nums_);
   h_cache_.reserve(layer_nums_ + 1);
@@ -88,10 +122,15 @@ void GenerationState::create() {
   }
   h_cache_.emplace_back(Tensor::empty({1, max_length_, hidden_size_}, kFloat32, kCPU).alloc());
 
-  save();
+  size_t kv_cache_size = 2 * static_cast<size_t>(layer_nums_) * max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE;
+  preallocate_cache_file(path_, "kv_cache.bin", kv_cache_size);
+  size_t h_cache_size = static_cast<size_t>(layer_nums_ + 1) * max_length_ * hidden_size_ * ELEMENT_SIZE;
+  preallocate_cache_file(path_, "h_cache.bin", h_cache_size);
+
+  checkpoint();
 }
 
-void GenerationState::save() const {
+void GenerationState::checkpoint() {
   if (!fs::exists(path_)) {
     fs::create_directories(path_);
   }
@@ -103,30 +142,45 @@ void GenerationState::save() const {
     watermark_file.write(reinterpret_cast<const char*>(layer_watermark_.data()), max_length_);
   }
 
-  {
-    auto h_cache_file = open_ofstream(path_ / "h_cache.bin", std::ios::binary);
-    for (int i = 0; i <= layer_nums_; ++i) {
-      auto h_ptr = h_cache_[i].cptrAt<char>({0, 0, 0});
-      h_cache_file.write(h_ptr, max_length_ * hidden_size_ * ELEMENT_SIZE);
+  auto kv_cache_file = open_fstream(path_ / "kv_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
+  auto h_cache_file = open_fstream(path_ / "h_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
+
+  size_t kv_entry_size = q_heads_ * kv_dim_ * ELEMENT_SIZE;
+  size_t h_entry_size = hidden_size_ * ELEMENT_SIZE;
+
+  // Write only the deltas
+  for (int pos = 0; pos < max_length_; ++pos) {
+    int last_layer = last_saved_watermark_[pos];
+    int curr_layer = layer_watermark_[pos];
+
+    if (curr_layer > last_layer) {
+      // Write layers [last_layer+1 ... curr_layer] for this position
+      // Watermark N means: h_cache_[0..N] valid, k/v_cache_[0..N-1] valid
+      for (int layer = last_layer + 1; layer <= curr_layer; ++layer) {
+        // Write H[layer]
+        size_t h_offset = static_cast<size_t>(layer) * max_length_ * h_entry_size + static_cast<size_t>(pos) * h_entry_size;
+        h_cache_file.seekp(h_offset);
+        auto h_ptr = h_cache_[layer].cptrAt<char>({0, pos, 0});
+        h_cache_file.write(h_ptr, h_entry_size);
+
+        // Write K/V[layer-1] if layer > 0
+        if (layer > 0) {
+          size_t kv_layer = layer - 1;
+          size_t k_offset = kv_layer * max_length_ * kv_entry_size + static_cast<size_t>(pos) * kv_entry_size;
+          kv_cache_file.seekp(k_offset);
+          auto k_ptr = k_cache_[kv_layer].cptrAt<char>({0, 0, pos, 0});
+          kv_cache_file.write(k_ptr, kv_entry_size);
+
+          size_t v_offset = (static_cast<size_t>(layer_nums_) + kv_layer) * max_length_ * kv_entry_size + static_cast<size_t>(pos) * kv_entry_size;
+          kv_cache_file.seekp(v_offset);
+          auto v_ptr = v_cache_[kv_layer].cptrAt<char>({0, 0, pos, 0});
+          kv_cache_file.write(v_ptr, kv_entry_size);
+        }
+      }
     }
   }
 
-  {
-    auto kv_cache_file = open_ofstream(path_ / "kv_cache.bin", std::ios::binary);
-    for (int i = 0; i < layer_nums_; ++i) {
-      auto k_ptr = k_cache_[i].cptrAt<char>({0, 0, 0, 0});
-      kv_cache_file.write(k_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
-    }
-    for (int i = 0; i < layer_nums_; ++i) {
-      auto v_ptr = v_cache_[i].cptrAt<char>({0, 0, 0, 0});
-      kv_cache_file.write(v_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
-    }
-  }
-}
-
-void GenerationState::sync_cache() const {
-  save();
-  // TODO: use a more efficient approach
+  last_saved_watermark_ = layer_watermark_;
 }
 
 void GenerationState::start(const Tensor& token_ids) {

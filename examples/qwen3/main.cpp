@@ -70,7 +70,7 @@ class Qwen3Service {
 
     model_->streamGenerate(inputs, {},
                            [&](int64_t token_id) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; });
-    state_.save();
+    state_.checkpoint();
 
     fmt::print("\n{}\n", std::string(60, '-'));
 
