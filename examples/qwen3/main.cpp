@@ -139,6 +139,6 @@ MLLM_MAIN({
   mllm::perf::saveReport("qwen3.perf");
 #endif
 
-  mllm::print("\n");
-  mllm::memoryReport();
+  // mllm::print("\n");
+  // mllm::memoryReport();
 })

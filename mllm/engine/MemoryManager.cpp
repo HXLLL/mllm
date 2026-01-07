@@ -44,12 +44,13 @@ void MemoryManager::alloc(Storage* s) {
 #endif
 
   if (try_to_alloc_size >= options_[s->device_].really_large_tensor_threshold) {
-    MLLM_WARN("Trying to alloc a really large storage, whose storage size is {}B. The mllm memory manager will alloc a memory "
-              "for this storage from OS directly instead of "
-              "allocating one from ObjectCachePool/BuddyMemoryPool. If your scenario need to "
-              "handle large storage frequently, you can modify the `buddy_first_segment_cap` in "
-              "`MemManagerCargo`.",
-              try_to_alloc_size);
+    MLLM_WARN("Allocating a really large storage ({}) from OS directly", try_to_alloc_size);
+    // MLLM_WARN("Trying to alloc a really large storage, whose storage size is {}B. The mllm memory manager will alloc a memory "
+    //           "for this storage from OS directly instead of "
+    //           "allocating one from ObjectCachePool/BuddyMemoryPool. If your scenario need to "
+    //           "handle large storage frequently, you can modify the `buddy_first_segment_cap` in "
+    //           "`MemManagerCargo`.",
+    //           try_to_alloc_size);
     allocator->alloc(s);
     return;
   }
