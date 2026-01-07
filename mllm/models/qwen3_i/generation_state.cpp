@@ -40,6 +40,8 @@ void GenerationState::load() {
 
   loadMetadata();
 
+  layer_watermark_.resize(max_length_);
+
   {
     auto watermark_file = open_ifstream(path_ / "layer_watermark.bin", std::ios::binary);
     watermark_file.read(reinterpret_cast<char*>(layer_watermark_.data()), max_length_);

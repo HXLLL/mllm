@@ -115,7 +115,7 @@ class Qwen3Text final : public nn::Module {
 
  private:
   [[nodiscard]] Tensor prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb);
-  [[nodiscard]] Tensor decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx);
+  [[nodiscard]] Tensor decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int token_idx);
 
   int chunk_size_;
   int num_layers_;

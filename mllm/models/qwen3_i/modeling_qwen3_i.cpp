@@ -119,7 +119,7 @@ std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::
   const auto& hidden_states = inputs[0];
   auto query = inputs[1].clone();
   const auto& key = inputs[2];
-  int64_t offset = args[0].get<int64_t>();
+  int offset = args[0].get<int>();
   const int count = hidden_states.shape()[1];
 
   auto [cached_key, cached_value] = state_.getKV(layer_idx_, 0, offset + count);
@@ -157,7 +157,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
   const auto& token_ids = inputs[0];
   const auto& sin_emb = inputs[1];
   const auto& cos_emb = inputs[2];
-  auto offset = args[0].get<int64_t>();
+  auto offset = args[0].get<int>();
   Tensor output = offset == 0 ? prefill_(token_ids, sin_emb, cos_emb) : decode_(token_ids, sin_emb, cos_emb, offset);
   return {output};
 }
@@ -173,23 +173,20 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
     int chunk_end = std::min(chunk_start + chunk_size_, seq_len);
     int len = chunk_end - chunk_start;
 
-    int min_layer = state_.getMinWatermark(chunk_start, len);
-    MLLM_INFO("Prefilling chunk [{}/{}] from layer {}", i + 1, num_chunks, min_layer + 1);
+    int start_layer = state_.getMinWatermark(chunk_start, len);
+    MLLM_INFO("Prefilling chunk [{}/{}] from layer {}", i + 1, num_chunks, start_layer + 1);
 
     auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
     auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
 
     Tensor x;
-    int start_layer;
-    if (min_layer < 0) {
+    if (start_layer < 0) {
       x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
       state_.updateH(0, chunk_start, len, x);
       start_layer = 0;
-    } else {
-      x = state_.getH(min_layer, chunk_start, len);
-      start_layer = min_layer;
     }
 
+    x = state_.getH(start_layer, chunk_start, len);
     for (size_t j = start_layer; j < num_layers_; ++j) {
       recordEvent<LayerBeginEvent>(j, len, chunk_start);
       auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
@@ -210,7 +207,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   return nn::functional::concat(chunk_outputs, 1);
 }
 
-Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx) {
+Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int token_idx) {
   if (state_.isPositionComplete(token_idx)) { return state_.getH(num_layers_, token_idx, 1); }
 
   MLLM_RT_ASSERT_EQ(token_ids.shape()[1], 1);
@@ -270,7 +267,7 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
   }
 
   auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
-  int64_t offset = *position_ids.cptrAt<int64_t>({0, 0});
+  int offset = *position_ids.cptrAt<int64_t>({0, 0});
   sequence = llm_(sequence, llm_embedding_sin, llm_embedding_cos, AnyValue(offset))[0];
   {
     auto S = sequence.shape()[1];
