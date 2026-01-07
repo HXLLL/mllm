@@ -40,13 +40,6 @@ void GenerationState::load() {
 
   loadMetadata();
 
-  output_tokens_ = Tensor::empty({max_length_, hidden_size_}, kFloat32, kCPU).alloc();
-  {
-    auto output_tokens_file = open_ifstream(path_ / "output_tokens.bin", std::ios::binary);
-    auto out_ptr = output_tokens_.ptrAt<char>({0, 0});
-    output_tokens_file.read(out_ptr, num_output_tokens_ * hidden_size_ * ELEMENT_SIZE);
-  }
-
   {
     auto kv_cache_file = open_ifstream(path_ / "kv_cache.bin", std::ios::binary);
 
@@ -77,7 +70,6 @@ void GenerationState::load() {
 
 void GenerationState::create() {
   input_tokens_ = {};
-  output_tokens_ = Tensor::empty({max_length_, hidden_size_}, kFloat32, kCPU).alloc();
   k_cache_.reserve(layer_nums_);
   v_cache_.reserve(layer_nums_);
   h_cache_.reserve(layer_nums_ + 1);
@@ -97,12 +89,6 @@ void GenerationState::save() const {
   }
 
   saveMetadata();
-
-  {
-    auto output_tokens_file = open_ofstream(path_ / "output_tokens.bin", std::ios::binary);
-    auto out_ptr = output_tokens_.cptrAt<char>({0, 0});
-    output_tokens_file.write(out_ptr, num_output_tokens_ * hidden_size_ * ELEMENT_SIZE);
-  }
 
   {
     auto h_cache_file = open_ofstream(path_ / "h_cache.bin", std::ios::binary);
@@ -143,19 +129,16 @@ void GenerationState::start_decode(const Tensor& token_id) {
   MLLM_RT_ASSERT(token_id.shape() == std::vector<int32_t>({1, 1}) && token_id.dtype() == kInt64);
 }
 
-void GenerationState::appendOutputToken(const Tensor& token) {
-  MLLM_RT_ASSERT(token.shape() == std::vector<int32_t>({1, 1, hidden_size_}) && token.dtype() == kFloat32);
-  auto src = token.cptrAt<mllm_byte_t>({0, 0, 0});
-  auto dst = output_tokens_.ptrAt<mllm_byte_t>({num_output_tokens_, 0});
-  std::memcpy(dst, src, hidden_size_ * ELEMENT_SIZE);
-  num_output_tokens_++;
-}
-
 void GenerationState::set_prefill_done() { prefill_done_ = 1; }
 
 int GenerationState::prefill_done() const { return prefill_done_; }
 
 const std::vector<int64_t>& GenerationState::getInputTokens() const { return input_tokens_; }
+
+bool GenerationState::isDecodePosCached(int64_t token_idx) const {
+  int num_input = input_tokens_.size();
+  return token_idx >= num_input && token_idx < num_input + num_decode_positions_;
+}
 
 void GenerationState::updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v) {
   MLLM_RT_ASSERT(k.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
@@ -180,6 +163,10 @@ void GenerationState::updateH(int layer_idx, int offset, int count, const Tensor
   auto h_ptr = h.cptrAt<mllm_byte_t>({0, 0, 0});
   auto h_cache_ptr = h_cache_[layer_idx].ptrAt<mllm_byte_t>({0, offset, 0});
   std::memcpy(h_cache_ptr, h_ptr, count * hidden_size_ * ELEMENT_SIZE);
+  if (layer_idx == layer_nums_ && offset >= static_cast<int>(input_tokens_.size())) {
+    int decode_pos = offset - input_tokens_.size();
+    if (decode_pos + count > num_decode_positions_) { num_decode_positions_ = decode_pos + count; }
+  }
 }
 
 Tensor GenerationState::getH(int layer_idx, int offset, int count) {
@@ -205,7 +192,7 @@ void GenerationState::loadMetadata() {
     metadata_file >> json_data;
   }
 
-  num_output_tokens_ = json_data.at("num_output_tokens");
+  num_decode_positions_ = json_data.count("num_decode_positions") ? json_data.at("num_decode_positions").get<int>() : (json_data.count("num_output_tokens") ? json_data.at("num_output_tokens").get<int>() : 0);
   max_length_ = json_data.at("max_length");
   layer_nums_ = json_data.at("layer_nums");
   q_heads_ = json_data.at("q_heads");
@@ -219,7 +206,7 @@ void GenerationState::loadMetadata() {
 
 void GenerationState::saveMetadata() const {
   nlohmann::json json_data;
-  json_data["num_output_tokens"] = num_output_tokens_;
+  json_data["num_decode_positions"] = num_decode_positions_;
   json_data["max_length"] = max_length_;
   json_data["layer_nums"] = layer_nums_;
   json_data["q_heads"] = q_heads_;

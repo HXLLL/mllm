@@ -165,7 +165,7 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb) {
   auto seq_len = token_ids.shape()[1];
   auto layer_nums = decode_blocks_.list().size();
-  if (state_.prefill_done()) { return norm_(state_.getH(layer_nums, 0, seq_len)); }
+  if (state_.prefill_done()) { return state_.getH(layer_nums, 0, seq_len); }
 
   int64_t offset = 0;
   auto num_chunks = (seq_len + chunk_size_ - 1) / chunk_size_;
@@ -197,19 +197,25 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
     }
 
     state_.sync_cache();
-    chunk_outputs.push_back(x);
+    // Apply norm to each chunk before concat
+    chunk_outputs.push_back(norm_(x));
     offset += len;
     MLLM_INFO("Prefilling [{} / {}]", offset, seq_len);
   }
   state_.set_prefill_done();
+  state_.sync_cache();  // Save prefill_done flag
   auto output = nn::functional::concat(chunk_outputs, 1);
 
-  return norm_(output);
+  return output;
 }
 
 Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx) {
+  auto layer_nums = decode_blocks_.list().size();
+  if (state_.isDecodePosCached(token_idx)) { return state_.getH(layer_nums, token_idx, 1); }
+
   MLLM_RT_ASSERT_EQ(token_ids.shape()[1], 1);
   auto x = embedding_(token_ids);
+  state_.updateH(0, token_idx, 1, x);
   for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
     recordEvent<LayerBeginEvent>(j, 1, token_idx);
     auto h2kv_result = h2kv_[j](x, sin_emb, cos_emb);
@@ -220,9 +226,12 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
     state_.updateKV(j, token_idx, 1, k, v);
     x = kv2h_[j](h, q, k, AnyValue(token_idx))[0];
     recordEvent<LayerCompleteEvent>(j, 1, token_idx);
+    state_.updateH(j + 1, token_idx, 1, x);
   }
+  auto output = norm_(x);
+  state_.updateH(layer_nums, token_idx, 1, output);
   state_.sync_cache();
-  return norm_(x);
+  return output;
 }
 
 /* ARGeneration Implementation */
@@ -266,9 +275,7 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
   sequence = llm_(sequence, llm_embedding_sin, llm_embedding_cos, AnyValue(offset))[0];
   {
     auto S = sequence.shape()[1];
-    auto D = sequence.shape()[2];
     sequence = sequence[{kAll, {S - 1}, kAll}];
-    state_.appendOutputToken(sequence);
   }
   if (tie_word_embeddings_) { sequence = lm_head_(sequence); }
 
