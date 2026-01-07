@@ -164,59 +164,59 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 
 Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb) {
   auto seq_len = token_ids.shape()[1];
-  auto layer_nums = decode_blocks_.list().size();
-  if (state_.prefill_done()) { return state_.getH(layer_nums, 0, seq_len); }
-
-  int64_t offset = 0;
   auto num_chunks = (seq_len + chunk_size_ - 1) / chunk_size_;
   std::vector<Tensor> chunk_outputs;
   chunk_outputs.reserve(num_chunks);
 
-  MLLM_INFO("Prefilling [{} / {}]", offset, seq_len);
   for (int i = 0; i < num_chunks; ++i) {
-    const int chunk_start = i * chunk_size_;
-    const int chunk_end = std::min(chunk_start + chunk_size_, seq_len);
+    int chunk_start = i * chunk_size_;
+    int chunk_end = std::min(chunk_start + chunk_size_, seq_len);
     int len = chunk_end - chunk_start;
 
-    auto x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
+    int min_layer = state_.getMinWatermark(chunk_start, len);
+    MLLM_INFO("Prefilling chunk [{}/{}] from layer {}", i + 1, num_chunks, min_layer + 1);
+
     auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
     auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
 
-    state_.updateH(0, offset, len, x);
-    for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
-      recordEvent<LayerBeginEvent>(j, len, offset);
+    Tensor x;
+    int start_layer;
+    if (min_layer < 0) {
+      x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
+      state_.updateH(0, chunk_start, len, x);
+      start_layer = 0;
+    } else {
+      x = state_.getH(min_layer, chunk_start, len);
+      start_layer = min_layer;
+    }
+
+    for (size_t j = start_layer; j < num_layers_; ++j) {
+      recordEvent<LayerBeginEvent>(j, len, chunk_start);
       auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
       auto& h = h2kv_result[0];
       auto& q = h2kv_result[1];
       auto& k = h2kv_result[2];
       auto& v = h2kv_result[3];
-      state_.updateKV(j, offset, len, k, v);
-      x = kv2h_[j](h, q, k, AnyValue(offset))[0];
-      recordEvent<LayerCompleteEvent>(j, len, offset);
-      state_.updateH(j + 1, offset, len, x);
+      state_.updateKV(j, chunk_start, len, k, v);
+      x = kv2h_[j](h, q, k, AnyValue(chunk_start))[0];
+      recordEvent<LayerCompleteEvent>(j, len, chunk_start);
+      state_.updateH(j + 1, chunk_start, len, x);
     }
 
     state_.sync_cache();
-    // Apply norm to each chunk before concat
     chunk_outputs.push_back(norm_(x));
-    offset += len;
-    MLLM_INFO("Prefilling [{} / {}]", offset, seq_len);
   }
-  state_.set_prefill_done();
-  state_.sync_cache();  // Save prefill_done flag
-  auto output = nn::functional::concat(chunk_outputs, 1);
 
-  return output;
+  return nn::functional::concat(chunk_outputs, 1);
 }
 
 Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int64_t token_idx) {
-  auto layer_nums = decode_blocks_.list().size();
-  if (state_.isDecodePosCached(token_idx)) { return state_.getH(layer_nums, token_idx, 1); }
+  if (state_.isPositionComplete(token_idx)) { return state_.getH(num_layers_, token_idx, 1); }
 
   MLLM_RT_ASSERT_EQ(token_ids.shape()[1], 1);
   auto x = embedding_(token_ids);
   state_.updateH(0, token_idx, 1, x);
-  for (size_t j = 0; j < decode_blocks_.list().size(); ++j) {
+  for (size_t j = 0; j < num_layers_; ++j) {
     recordEvent<LayerBeginEvent>(j, 1, token_idx);
     auto h2kv_result = h2kv_[j](x, sin_emb, cos_emb);
     auto& h = h2kv_result[0];
@@ -229,7 +229,6 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
     state_.updateH(j + 1, token_idx, 1, x);
   }
   auto output = norm_(x);
-  state_.updateH(layer_nums, token_idx, 1, output);
   state_.sync_cache();
   return output;
 }

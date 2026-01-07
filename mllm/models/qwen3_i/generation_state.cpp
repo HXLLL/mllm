@@ -41,6 +41,11 @@ void GenerationState::load() {
   loadMetadata();
 
   {
+    auto watermark_file = open_ifstream(path_ / "layer_watermark.bin", std::ios::binary);
+    watermark_file.read(reinterpret_cast<char*>(layer_watermark_.data()), max_length_);
+  }
+
+  {
     auto kv_cache_file = open_ifstream(path_ / "kv_cache.bin", std::ios::binary);
 
     k_cache_.reserve(layer_nums_);
@@ -70,6 +75,7 @@ void GenerationState::load() {
 
 void GenerationState::create() {
   input_tokens_ = {};
+  layer_watermark_.assign(max_length_, -1);
   k_cache_.reserve(layer_nums_);
   v_cache_.reserve(layer_nums_);
   h_cache_.reserve(layer_nums_ + 1);
@@ -89,6 +95,11 @@ void GenerationState::save() const {
   }
 
   saveMetadata();
+
+  {
+    auto watermark_file = open_ofstream(path_ / "layer_watermark.bin", std::ios::binary);
+    watermark_file.write(reinterpret_cast<const char*>(layer_watermark_.data()), max_length_);
+  }
 
   {
     auto h_cache_file = open_ofstream(path_ / "h_cache.bin", std::ios::binary);
@@ -129,16 +140,15 @@ void GenerationState::start_decode(const Tensor& token_id) {
   MLLM_RT_ASSERT(token_id.shape() == std::vector<int32_t>({1, 1}) && token_id.dtype() == kInt64);
 }
 
-void GenerationState::set_prefill_done() { prefill_done_ = 1; }
-
-int GenerationState::prefill_done() const { return prefill_done_; }
-
 const std::vector<int64_t>& GenerationState::getInputTokens() const { return input_tokens_; }
 
-bool GenerationState::isDecodePosCached(int64_t token_idx) const {
-  int num_input = input_tokens_.size();
-  return token_idx >= num_input && token_idx < num_input + num_decode_positions_;
+int GenerationState::getMinWatermark(int offset, int count) const {
+  int min_layer = layer_watermark_[offset];
+  for (int i = 1; i < count; ++i) { min_layer = std::min(min_layer, static_cast<int>(layer_watermark_[offset + i])); }
+  return min_layer;
 }
+
+bool GenerationState::isPositionComplete(int pos) const { return layer_watermark_[pos] == layer_nums_; }
 
 void GenerationState::updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v) {
   MLLM_RT_ASSERT(k.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
@@ -163,10 +173,7 @@ void GenerationState::updateH(int layer_idx, int offset, int count, const Tensor
   auto h_ptr = h.cptrAt<mllm_byte_t>({0, 0, 0});
   auto h_cache_ptr = h_cache_[layer_idx].ptrAt<mllm_byte_t>({0, offset, 0});
   std::memcpy(h_cache_ptr, h_ptr, count * hidden_size_ * ELEMENT_SIZE);
-  if (layer_idx == layer_nums_ && offset >= static_cast<int>(input_tokens_.size())) {
-    int decode_pos = offset - input_tokens_.size();
-    if (decode_pos + count > num_decode_positions_) { num_decode_positions_ = decode_pos + count; }
-  }
+  for (int i = 0; i < count; ++i) { layer_watermark_[offset + i] = layer_idx; }
 }
 
 Tensor GenerationState::getH(int layer_idx, int offset, int count) {
@@ -192,21 +199,18 @@ void GenerationState::loadMetadata() {
     metadata_file >> json_data;
   }
 
-  num_decode_positions_ = json_data.count("num_decode_positions") ? json_data.at("num_decode_positions").get<int>() : (json_data.count("num_output_tokens") ? json_data.at("num_output_tokens").get<int>() : 0);
   max_length_ = json_data.at("max_length");
   layer_nums_ = json_data.at("layer_nums");
   q_heads_ = json_data.at("q_heads");
   kv_heads_ = json_data.at("kv_heads");
   kv_dim_ = json_data.at("kv_dim");
   hidden_size_ = json_data.at("hidden_size");
-  prefill_done_ = json_data.at("prefill_done");
   started_ = json_data.at("started");
   input_tokens_ = json_data.at("input_tokens").get<std::vector<int64_t>>();
 }
 
 void GenerationState::saveMetadata() const {
   nlohmann::json json_data;
-  json_data["num_decode_positions"] = num_decode_positions_;
   json_data["max_length"] = max_length_;
   json_data["layer_nums"] = layer_nums_;
   json_data["q_heads"] = q_heads_;
@@ -214,7 +218,6 @@ void GenerationState::saveMetadata() const {
   json_data["kv_dim"] = kv_dim_;
   json_data["hidden_size"] = hidden_size_;
   json_data["input_tokens"] = input_tokens_;
-  json_data["prefill_done"] = prefill_done_;
   json_data["started"] = started_;
   {
     auto metadata_file = open_ofstream(path_ / "metadata.json");

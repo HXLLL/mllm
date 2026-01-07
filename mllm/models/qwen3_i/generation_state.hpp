@@ -32,12 +32,10 @@ class GenerationState {
 
   void start_decode(const Tensor& token_id);
 
-  void set_prefill_done();
-  [[nodiscard]] int prefill_done() const;
-
   [[nodiscard]] const std::vector<int64_t>& getInputTokens() const;
 
-  [[nodiscard]] bool isDecodePosCached(int64_t token_idx) const;
+  [[nodiscard]] int getMinWatermark(int offset, int count) const;
+  [[nodiscard]] bool isPositionComplete(int pos) const;
 
   void updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v);
   [[nodiscard]] std::array<Tensor, 2> getKV(int layer_idx);
@@ -60,9 +58,9 @@ class GenerationState {
   int kv_heads_;
   int kv_dim_;
   int hidden_size_;
-  int num_decode_positions_ = 0;
-  int prefill_done_ = 0;
   int started_ = 0;
+
+  std::vector<int8_t> layer_watermark_;  // -1 = not computed, N = h_cache_[0..N] valid
 
   std::vector<int64_t> input_tokens_;
   std::vector<Tensor> k_cache_;  // Shape: [layer_nums, 1, q_heads, max_cache_length, kv_dims]
