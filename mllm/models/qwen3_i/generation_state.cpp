@@ -56,6 +56,14 @@ static inline void preallocate_cache_file(const fs::path& dir, const std::string
   close(fd);
 }
 
+static inline void fsync_path(const fs::path& path) {
+  int fd = open(path.c_str(), O_WRONLY);
+  if (fd >= 0) {
+    fsync(fd);
+    close(fd);
+  }
+}
+
 GenerationState::GenerationState(const Qwen3Config& cfg, const fs::path& path)
     : path_(path),
       max_length_(cfg.max_cache_length),
@@ -80,19 +88,22 @@ void GenerationState::load() {
   last_saved_watermark_ = layer_watermark_;
 
   {
-    auto kv_cache_file = open_ifstream(path_ / "kv_cache.bin", std::ios::binary);
-
+    auto k_cache_file = open_ifstream(path_ / "k_cache.bin", std::ios::binary);
     k_cache_.reserve(layer_nums_);
     for (int i = 0; i < layer_nums_; ++i) {
       k_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
       auto k_ptr = k_cache_[i].ptrAt<char>({0, 0, 0, 0});
-      kv_cache_file.read(k_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
+      k_cache_file.read(k_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
     }
+  }
+
+  {
+    auto v_cache_file = open_ifstream(path_ / "v_cache.bin", std::ios::binary);
     v_cache_.reserve(layer_nums_);
     for (int i = 0; i < layer_nums_; ++i) {
       v_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
       auto v_ptr = v_cache_[i].ptrAt<char>({0, 0, 0, 0});
-      kv_cache_file.read(v_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
+      v_cache_file.read(v_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
     }
   }
 
@@ -122,12 +133,59 @@ void GenerationState::create() {
   }
   h_cache_.emplace_back(Tensor::empty({1, max_length_, hidden_size_}, kFloat32, kCPU).alloc());
 
-  size_t kv_cache_size = 2 * static_cast<size_t>(layer_nums_) * max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE;
-  preallocate_cache_file(path_, "kv_cache.bin", kv_cache_size);
+  size_t kv_cache_size = static_cast<size_t>(layer_nums_) * max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE;
   size_t h_cache_size = static_cast<size_t>(layer_nums_ + 1) * max_length_ * hidden_size_ * ELEMENT_SIZE;
+
+  preallocate_cache_file(path_, "k_cache.bin", kv_cache_size);
+  preallocate_cache_file(path_, "v_cache.bin", kv_cache_size);
   preallocate_cache_file(path_, "h_cache.bin", h_cache_size);
 
   checkpoint();
+}
+
+// Returns (start_pos, count) for positions that need to be written.
+// Returns count=0 if nothing needs to be written.
+std::pair<int, int> GenerationState::findWriteRange(const std::function<bool(int)>& shouldWrite) const {
+  int pos = 0;
+  // Skip positions that don't need writing
+  while (pos < max_length_ && !shouldWrite(pos)) {
+    pos++;
+  }
+
+  int start_pos = pos;
+  // Count consecutive positions that need writing
+  while (pos < max_length_ && shouldWrite(pos)) {
+    pos++;
+  }
+  return {start_pos, pos - start_pos};
+}
+
+void GenerationState::writeHCacheLayer(std::fstream& file, int layer) {
+  auto [start_pos, count] =
+      findWriteRange([&](int pos) { return layer_watermark_[pos] >= layer && last_saved_watermark_[pos] < layer; });
+  if (count == 0) return;
+  size_t h_entry_size = hidden_size_ * ELEMENT_SIZE;
+  size_t layer_stride = static_cast<size_t>(layer) * max_length_ * h_entry_size;
+  size_t offset = layer_stride + static_cast<size_t>(start_pos) * h_entry_size;
+  file.seekp(offset);
+  auto ptr = h_cache_[layer].cptrAt<char>({0, start_pos, 0});
+  file.write(ptr, count * h_entry_size);
+}
+
+void GenerationState::writeKVCacheLayer(std::fstream& file, const Tensor& cache, int layer) {
+  auto [start_pos, count] =
+      findWriteRange([&](int pos) { return layer_watermark_[pos] > layer && last_saved_watermark_[pos] <= layer; });
+  if (count == 0) return;
+  size_t kv_entry_size = kv_dim_ * ELEMENT_SIZE;
+  size_t head_stride = max_length_ * kv_entry_size;
+  size_t layer_stride = static_cast<size_t>(layer) * q_heads_ * head_stride;
+  for (int h = 0; h < q_heads_; ++h) {
+    size_t offset = layer_stride + static_cast<size_t>(h) * head_stride +
+                    static_cast<size_t>(start_pos) * kv_entry_size;
+    file.seekp(offset);
+    auto ptr = cache.cptrAt<char>({0, h, start_pos, 0});
+    file.write(ptr, count * kv_entry_size);
+  }
 }
 
 void GenerationState::checkpoint() {
@@ -137,48 +195,40 @@ void GenerationState::checkpoint() {
 
   saveMetadata();
 
+  // Write data files with layer-major sequential writes
+  {
+    auto k_cache_file = open_fstream(path_ / "k_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
+    auto v_cache_file = open_fstream(path_ / "v_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
+    auto h_cache_file = open_fstream(path_ / "h_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
+
+    // Write H cache: watermark N means H[0..N] are valid
+    for (int layer = 0; layer <= layer_nums_; ++layer) {
+      writeHCacheLayer(h_cache_file, layer);
+    }
+
+    // Write K/V cache: watermark N means K/V[0..N-1] are valid
+    for (int layer = 0; layer < layer_nums_; ++layer) {
+      writeKVCacheLayer(k_cache_file, k_cache_[layer], layer);
+      writeKVCacheLayer(v_cache_file, v_cache_[layer], layer);
+    }
+
+    k_cache_file.flush();
+    v_cache_file.flush();
+    h_cache_file.flush();
+  }
+
+  // Fsync data files before writing commit marker
+  fsync_path(path_ / "k_cache.bin");
+  fsync_path(path_ / "v_cache.bin");
+  fsync_path(path_ / "h_cache.bin");
+
+  // Write watermark (commit marker) only after data is durable
   {
     auto watermark_file = open_ofstream(path_ / "layer_watermark.bin", std::ios::binary);
     watermark_file.write(reinterpret_cast<const char*>(layer_watermark_.data()), max_length_);
-  }
-
-  auto kv_cache_file = open_fstream(path_ / "kv_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
-  auto h_cache_file = open_fstream(path_ / "h_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
-
-  size_t kv_entry_size = q_heads_ * kv_dim_ * ELEMENT_SIZE;
-  size_t h_entry_size = hidden_size_ * ELEMENT_SIZE;
-
-  // Write only the deltas
-  for (int pos = 0; pos < max_length_; ++pos) {
-    int last_layer = last_saved_watermark_[pos];
-    int curr_layer = layer_watermark_[pos];
-
-    if (curr_layer > last_layer) {
-      // Write layers [last_layer+1 ... curr_layer] for this position
-      // Watermark N means: h_cache_[0..N] valid, k/v_cache_[0..N-1] valid
-      for (int layer = last_layer + 1; layer <= curr_layer; ++layer) {
-        // Write H[layer]
-        size_t h_offset = static_cast<size_t>(layer) * max_length_ * h_entry_size + static_cast<size_t>(pos) * h_entry_size;
-        h_cache_file.seekp(h_offset);
-        auto h_ptr = h_cache_[layer].cptrAt<char>({0, pos, 0});
-        h_cache_file.write(h_ptr, h_entry_size);
-
-        // Write K/V[layer-1] if layer > 0
-        if (layer > 0) {
-          size_t kv_layer = layer - 1;
-          size_t k_offset = kv_layer * max_length_ * kv_entry_size + static_cast<size_t>(pos) * kv_entry_size;
-          kv_cache_file.seekp(k_offset);
-          auto k_ptr = k_cache_[kv_layer].cptrAt<char>({0, 0, pos, 0});
-          kv_cache_file.write(k_ptr, kv_entry_size);
-
-          size_t v_offset = (static_cast<size_t>(layer_nums_) + kv_layer) * max_length_ * kv_entry_size + static_cast<size_t>(pos) * kv_entry_size;
-          kv_cache_file.seekp(v_offset);
-          auto v_ptr = v_cache_[kv_layer].cptrAt<char>({0, 0, pos, 0});
-          kv_cache_file.write(v_ptr, kv_entry_size);
-        }
-      }
-    }
-  }
+    watermark_file.flush();
+  } // RAII: file closed here
+  fsync_path(path_ / "layer_watermark.bin");
 
   last_saved_watermark_ = layer_watermark_;
 }

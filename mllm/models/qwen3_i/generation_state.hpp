@@ -38,6 +38,13 @@ class GenerationState {
  private:
   const size_t ELEMENT_SIZE = bytesOfType(kFloat32) / lanesOfType(kFloat32);
 
+  // Returns (start_pos, count) for positions that need to be written.
+  // Returns count=0 if nothing needs to be written.
+  std::pair<int, int> findWriteRange(const std::function<bool(int)>& shouldWrite) const;
+
+  void writeHCacheLayer(std::fstream& file, int layer);
+  void writeKVCacheLayer(std::fstream& file, const Tensor& cache, int layer);
+
   void loadMetadata();
   void saveMetadata() const;
 
