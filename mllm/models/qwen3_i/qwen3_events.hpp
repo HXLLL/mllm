@@ -98,6 +98,37 @@ struct CheckpointWatermarkEvent final : MetaEvent<CheckpointWatermarkEvent> {
   static constexpr const char* kTypeName = "CheckpointWatermark";
 };
 
+// State recovery profiling events
+struct StateLoadBeginEvent final : MetaEvent<StateLoadBeginEvent> {
+  static constexpr const char* kTypeName = "StateLoadBegin";
+};
+struct StateLoadMetadataEvent final : MetaEvent<StateLoadMetadataEvent> {
+  static constexpr const char* kTypeName = "StateLoadMetadata";
+};
+struct StateLoadWatermarkEvent final : MetaEvent<StateLoadWatermarkEvent> {
+  static constexpr const char* kTypeName = "StateLoadWatermark";
+};
+struct StateLoadKCacheEvent final : MetaEvent<StateLoadKCacheEvent> {
+  static constexpr const char* kTypeName = "StateLoadKCache";
+};
+struct StateLoadVCacheEvent final : MetaEvent<StateLoadVCacheEvent> {
+  static constexpr const char* kTypeName = "StateLoadVCache";
+};
+struct StateLoadHCacheEvent final : MetaEvent<StateLoadHCacheEvent> {
+  static constexpr const char* kTypeName = "StateLoadHCache";
+};
+struct StateLoadCompleteEvent final : MetaEvent<StateLoadCompleteEvent> {
+  static constexpr const char* kTypeName = "StateLoadComplete";
+};
+
+// Model loading profiling events
+struct ModelLoadBeginEvent final : MetaEvent<ModelLoadBeginEvent> {
+  static constexpr const char* kTypeName = "ModelLoadBegin";
+};
+struct ModelLoadCompleteEvent final : MetaEvent<ModelLoadCompleteEvent> {
+  static constexpr const char* kTypeName = "ModelLoadComplete";
+};
+
 template<typename EventType>
 static inline void recordEvent(int layer_idx, int seq_len, int token_idx) {
   Context::instance().tracer()->record<EventType>(layer_idx, seq_len, token_idx);

@@ -75,9 +75,12 @@ GenerationState::GenerationState(const Qwen3Config& cfg, const fs::path& path)
       hidden_size_(cfg.hidden_size) {}
 
 void GenerationState::load() {
+  auto tracer = Context::instance().tracer();
+  tracer->record<StateLoadBeginEvent>();
   MLLM_INFO("GenerationState: Loading state from {}", path_.string());
 
   loadMetadata();
+  tracer->record<StateLoadMetadataEvent>();
 
   layer_watermark_.resize(max_length_);
 
@@ -87,6 +90,7 @@ void GenerationState::load() {
   }
 
   last_saved_watermark_ = layer_watermark_;
+  tracer->record<StateLoadWatermarkEvent>();
 
   {
     auto k_cache_file = open_ifstream(path_ / "k_cache.bin", std::ios::binary);
@@ -97,6 +101,7 @@ void GenerationState::load() {
       k_cache_file.read(k_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
     }
   }
+  tracer->record<StateLoadKCacheEvent>();
 
   {
     auto v_cache_file = open_ifstream(path_ / "v_cache.bin", std::ios::binary);
@@ -107,6 +112,7 @@ void GenerationState::load() {
       v_cache_file.read(v_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
     }
   }
+  tracer->record<StateLoadVCacheEvent>();
 
   {
     auto h_cache_file = open_ifstream(path_ / "h_cache.bin", std::ios::binary);
@@ -117,6 +123,9 @@ void GenerationState::load() {
       h_cache_file.read(h_ptr, max_length_ * hidden_size_ * ELEMENT_SIZE);
     }
   }
+  tracer->record<StateLoadHCacheEvent>();
+
+  tracer->record<StateLoadCompleteEvent>();
 }
 
 void GenerationState::create() {

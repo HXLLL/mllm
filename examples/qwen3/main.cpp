@@ -7,6 +7,7 @@
 #include <mllm/models/qwen3_i/modeling_qwen3_i.hpp>
 #include <mllm/models/qwen3/tokenization_qwen3.hpp>
 #include "mllm/models/qwen3_i/generation_state.hpp"
+#include "mllm/models/qwen3_i/qwen3_events.hpp"
 
 static std::string g_trace_file;
 
@@ -64,9 +65,11 @@ class Qwen3Service {
     }
     model_ = std::make_unique<Model>(qwen3_cfg_, state_, config_.chunk_size);
 
+    mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadBeginEvent>();
     mllm::Timer load_model_timer;
     auto model_params = mllm::load(config_.model_path, config_.file_version, mllm::kCPU, config_.use_mmap);
     model_->load(model_params);
+    mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadCompleteEvent>();
     fmt::print("Model loaded in {}ms\n", load_model_timer.elapsed_ms());
   }
 
