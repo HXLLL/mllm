@@ -75,6 +75,29 @@ struct CheckpointCompleteEvent final : public Event {
   int count_;
 };
 
+// Checkpoint profiling events - mark phases for timing analysis
+struct CheckpointMetadataEvent final : MetaEvent<CheckpointMetadataEvent> {
+  static constexpr const char* kTypeName = "CheckpointMetadata";
+};
+struct CheckpointFilesOpenEvent final : MetaEvent<CheckpointFilesOpenEvent> {
+  static constexpr const char* kTypeName = "CheckpointFilesOpen";
+};
+struct CheckpointHCacheWriteEvent final : MetaEvent<CheckpointHCacheWriteEvent> {
+  static constexpr const char* kTypeName = "CheckpointHCacheWrite";
+};
+struct CheckpointKVCacheWriteEvent final : MetaEvent<CheckpointKVCacheWriteEvent> {
+  static constexpr const char* kTypeName = "CheckpointKVCacheWrite";
+};
+struct CheckpointFlushEvent final : MetaEvent<CheckpointFlushEvent> {
+  static constexpr const char* kTypeName = "CheckpointFlush";
+};
+struct CheckpointFsyncDataEvent final : MetaEvent<CheckpointFsyncDataEvent> {
+  static constexpr const char* kTypeName = "CheckpointFsyncData";
+};
+struct CheckpointWatermarkEvent final : MetaEvent<CheckpointWatermarkEvent> {
+  static constexpr const char* kTypeName = "CheckpointWatermark";
+};
+
 template<typename EventType>
 static inline void recordEvent(int layer_idx, int seq_len, int token_idx) {
   Context::instance().tracer()->record<EventType>(layer_idx, seq_len, token_idx);

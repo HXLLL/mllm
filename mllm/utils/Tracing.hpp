@@ -99,6 +99,7 @@ public:
     
     std::ofstream file(filepath, append && file_exists ? std::ios::app : std::ios::trunc);
     if (!file.is_open()) return false;
+    file.imbue(std::locale::classic());
     
     std::set<std::string> keys;
     for (const auto& event : events_) {

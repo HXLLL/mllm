@@ -191,13 +191,15 @@ void GenerationState::writeKVCacheLayer(std::fstream& file, const Tensor& cache,
 }
 
 void GenerationState::checkpoint() {
-  Context::instance().tracer()->record<CheckpointBeginEvent>();
+  auto tracer = Context::instance().tracer();
+  tracer->record<CheckpointBeginEvent>();
 
   if (!fs::exists(path_)) {
     fs::create_directories(path_);
   }
 
   saveMetadata();
+  tracer->record<CheckpointMetadataEvent>();
 
   int count = 0;
 
@@ -206,25 +208,30 @@ void GenerationState::checkpoint() {
     auto k_cache_file = open_fstream(path_ / "k_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
     auto v_cache_file = open_fstream(path_ / "v_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
     auto h_cache_file = open_fstream(path_ / "h_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
+    tracer->record<CheckpointFilesOpenEvent>();
 
     for (int layer = 0; layer <= layer_nums_; ++layer) {
       count += writeHCacheLayer(h_cache_file, layer);
     }
+    tracer->record<CheckpointHCacheWriteEvent>();
 
     for (int layer = 0; layer < layer_nums_; ++layer) {
       writeKVCacheLayer(k_cache_file, k_cache_[layer], layer);
       writeKVCacheLayer(v_cache_file, v_cache_[layer], layer);
     }
+    tracer->record<CheckpointKVCacheWriteEvent>();
 
     k_cache_file.flush();
     v_cache_file.flush();
     h_cache_file.flush();
+    tracer->record<CheckpointFlushEvent>();
   }
 
   // Fsync data files before writing commit marker
   fsync_path(path_ / "k_cache.bin");
   fsync_path(path_ / "v_cache.bin");
   fsync_path(path_ / "h_cache.bin");
+  tracer->record<CheckpointFsyncDataEvent>();
 
   // Write watermark (commit marker) only after data is durable
   {
@@ -233,10 +240,11 @@ void GenerationState::checkpoint() {
     watermark_file.flush();
   } // RAII: file closed here
   fsync_path(path_ / "layer_watermark.bin");
+  tracer->record<CheckpointWatermarkEvent>();
 
   last_saved_watermark_ = layer_watermark_;
 
-  Context::instance().tracer()->record<CheckpointCompleteEvent>(count);
+  tracer->record<CheckpointCompleteEvent>(count);
 }
 
 void GenerationState::start(const Tensor& token_ids) {
