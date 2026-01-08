@@ -17,11 +17,19 @@ namespace mllm::models::qwen3_i {
 
 /** Qwen3MLP Implementation **/
 
-Qwen3MLP::Qwen3MLP(const std::string& name, const Qwen3Config& cfg) : nn::Module(name) {
+Qwen3MLP::Qwen3MLP(const std::string& name, const Qwen3Config& cfg, ParameterLoader& parameter_loader)
+    : nn::Module(name), parameter_loader_(parameter_loader) {
   gate_proj_ = reg<nn::Linear>("gate_proj", cfg.hidden_size, cfg.intermediate_size, false, cfg.linear_impl_type);
   up_proj_ = reg<nn::Linear>("up_proj", cfg.hidden_size, cfg.intermediate_size, false, cfg.linear_impl_type);
   down_proj_ = reg<nn::Linear>("down_proj", cfg.intermediate_size, cfg.hidden_size, false, cfg.linear_impl_type);
   silu_ = reg<nn::SiLU>("act");
+}
+
+void Qwen3MLP::loadFromDisk() {
+  auto prefix = getModuleName() + ".";
+  parameter_loader_.loadTensor(prefix + "gate_proj.weight");
+  parameter_loader_.loadTensor(prefix + "up_proj.weight");
+  parameter_loader_.loadTensor(prefix + "down_proj.weight");
 }
 
 std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
@@ -35,8 +43,9 @@ std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const s
 
 /** Qwen3Decoder Implementation **/
 
-Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, GenerationState& state, int idx)
+Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int idx)
     : nn::Module(name),
+      parameter_loader_(parameter_loader),
       layer_idx_(idx),
       hidden_size_(cfg.hidden_size),
       head_dim_(cfg.head_dim),
@@ -52,10 +61,27 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, Gene
       k_rope_(reg<nn::RoPE>("self_attn.k_rope", cfg.rope_theta, cfg.max_position_embeddings)),
       mask_(reg<nn::CausalMask>("self_attn.mask")),
       softmax_(reg<nn::Softmax>("self_attn.softmax", -1)),
-      mlp_(reg<Qwen3MLP>("mlp", cfg)),
+      mlp_(reg<Qwen3MLP>("mlp", cfg, parameter_loader)),
       input_layer_norm_(reg<nn::RMSNorm>("input_layernorm", cfg.rms_norm_eps)),
       post_attention_layer_norm_(reg<nn::RMSNorm>("post_attention_layernorm", cfg.rms_norm_eps)),
       state_(state) {}
+
+void Qwen3Decoder::loadFromDisk() {
+  auto prefix = getModuleName() + ".";
+  // Attention projections
+  parameter_loader_.loadTensor(prefix + "self_attn.q_proj.weight");
+  parameter_loader_.loadTensor(prefix + "self_attn.k_proj.weight");
+  parameter_loader_.loadTensor(prefix + "self_attn.v_proj.weight");
+  parameter_loader_.loadTensor(prefix + "self_attn.o_proj.weight");
+  // QK norms
+  parameter_loader_.loadTensor(prefix + "self_attn.q_norm.weight");
+  parameter_loader_.loadTensor(prefix + "self_attn.k_norm.weight");
+  // Layer norms
+  parameter_loader_.loadTensor(prefix + "input_layernorm.weight");
+  parameter_loader_.loadTensor(prefix + "post_attention_layernorm.weight");
+  // Recurse into MLP
+  mlp_.loadFromDisk();
+}
 
 std::vector<Tensor> Qwen3Decoder::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) { return {}; }
 
@@ -142,15 +168,26 @@ std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::
 
 /** Qwen3Text Implementation **/
 
-Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state, int chunk_size)
-    : nn::Module(name), chunk_size_(chunk_size), num_layers_(cfg.num_hidden_layers), state_(state) {
-  decode_blocks_ = reg<nn::ModuleListWithIdx<Qwen3Decoder>>("layers", num_layers_, cfg, state);
+Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int chunk_size)
+    : nn::Module(name), parameter_loader_(parameter_loader), chunk_size_(chunk_size), num_layers_(cfg.num_hidden_layers), state_(state) {
+  decode_blocks_ = reg<nn::ModuleListWithIdx<Qwen3Decoder>>("layers", num_layers_, cfg, state, parameter_loader);
   for (auto& block : decode_blocks_.list()) {
     h2kv_.emplace_back(block, state_);
     kv2h_.emplace_back(block, state_);
   }
   norm_ = reg<nn::RMSNorm>("norm", cfg.rms_norm_eps);
   embedding_ = reg<nn::Embedding>("embed_tokens", cfg.vocab_size, cfg.hidden_size);
+}
+
+void Qwen3Text::loadFromDisk() {
+  auto prefix = getModuleName() + ".";
+  // Load embedding and norm (layers are loaded on-demand)
+  parameter_loader_.loadTensor(prefix + "embed_tokens.weight");
+  parameter_loader_.loadTensor(prefix + "norm.weight");
+
+  for (auto& block : decode_blocks_.list()) {
+    block.loadFromDisk();
+  }
 }
 
 std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
@@ -233,8 +270,8 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
 
 /* ARGeneration Implementation */
 
-Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, GenerationState& state, int chunk_size)
-    : cfg_(cfg), state_(state), llm_(reg<Qwen3Text>("model", cfg_, state_, chunk_size)) {
+Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int chunk_size)
+    : parameter_loader_(parameter_loader), cfg_(cfg), state_(state), llm_(reg<Qwen3Text>("model", cfg_, state_, parameter_loader_, chunk_size)) {
   MLLM_INFO("Initializing intermittent Qwen3 model");
 
   eos_token_id_ = cfg_.end_of_text_token_id;
@@ -245,6 +282,16 @@ Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cf
     lm_head_ = reg<nn::Linear>("lm_head_out", cfg_.hidden_size, cfg_.vocab_size, false, cfg_.linear_impl_type);
   }
   registerBuffer("inv_freq", makeRoPEInvFreq(cfg_.head_dim, cfg_.rope_theta));
+}
+
+void Qwen3IntermittentForCausalLM::loadFromDisk() {
+  // Load embedding, norm, and lm_head at startup (layers are loaded on-demand)
+  llm_.loadFromDisk();
+  if (tie_word_embeddings_) {
+    parameter_loader_.loadTensor("lm_head_out.weight");
+  }
+  // 顶层调用 load()，递归加载 embedding/norm/lm_head 到 ops
+  load(parameter_loader_.getParameterFile());
 }
 
 ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationOutputPast& input,

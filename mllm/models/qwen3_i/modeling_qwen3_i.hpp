@@ -7,6 +7,7 @@
 #include "mllm/nn/Module.hpp"
 #include "mllm/nn/Nn.hpp"
 #include "mllm/models/qwen3_i/generation_state.hpp"
+#include "mllm/models/qwen3_i/parameter_loader.hpp"
 #include "mllm/models/qwen3/configuration_qwen3.hpp"
 #include "mllm/models/ARGeneration.hpp"
 
@@ -16,11 +17,13 @@ using Qwen3Config = mllm::models::qwen3::Qwen3Config;
 
 class Qwen3MLP final : public nn::Module {
  public:
-  Qwen3MLP() = default;
-  Qwen3MLP(const std::string& name, const Qwen3Config& cfg);
+  Qwen3MLP(const std::string& name, const Qwen3Config& cfg, ParameterLoader& parameter_loader);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 
+  void loadFromDisk();
+
  private:
+  ParameterLoader &parameter_loader_;
   nn::Linear gate_proj_;
   nn::Linear up_proj_;
   nn::Linear down_proj_;
@@ -29,13 +32,16 @@ class Qwen3MLP final : public nn::Module {
 
 class Qwen3Decoder final : public nn::Module {
  public:
-  Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, GenerationState& state, int idx);
+  Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int idx);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
+
+  void loadFromDisk();
 
   friend class H2KV;
   friend class KV2H;
 
  private:
+  ParameterLoader& parameter_loader_;
   int layer_idx_;
   int hidden_size_;
   int head_dim_;
@@ -110,13 +116,16 @@ class KV2H : public Task {
 
 class Qwen3Text final : public nn::Module {
  public:
-  Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state, int chunk_size);
+  Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int chunk_size);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
+
+  void loadFromDisk();
 
  private:
   [[nodiscard]] Tensor prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb);
   [[nodiscard]] Tensor decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int token_idx);
 
+  ParameterLoader& parameter_loader_;
   int chunk_size_;
   int num_layers_;
 
@@ -130,13 +139,16 @@ class Qwen3Text final : public nn::Module {
 
 class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {
  public:
-  explicit Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, GenerationState& state, int chunk_size);
+  explicit Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int chunk_size);
 
   ARGenerationOutputPast forward(const ARGenerationOutputPast& input, const ARGenerationArgs& args) override;
   void streamGenerate(const ARGenerationOutputPast& input, const ARGenerationArgs& args,
                       const std::function<void(int64_t)>& callback) override;
 
+  void loadFromDisk();
+
  private:
+  ParameterLoader& parameter_loader_;
   const Qwen3Config& cfg_;
   GenerationState& state_;
   Qwen3Text llm_;

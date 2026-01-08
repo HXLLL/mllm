@@ -5,6 +5,7 @@
 #include <mllm/mllm.hpp>
 #include <mllm/utils/Timer.hpp>
 #include <mllm/models/qwen3_i/modeling_qwen3_i.hpp>
+#include <mllm/models/qwen3_i/parameter_loader.hpp>
 #include <mllm/models/qwen3/tokenization_qwen3.hpp>
 #include "mllm/models/qwen3_i/generation_state.hpp"
 #include "mllm/models/qwen3_i/qwen3_events.hpp"
@@ -37,15 +38,14 @@ class Qwen3Service {
  public:
   using Model = mllm::models::qwen3_i::Qwen3IntermittentForCausalLM;
   using GenerationState = mllm::models::qwen3_i::GenerationState;
+  using ParameterLoader = mllm::ParameterLoader;
 
   struct Config {
     std::filesystem::path model_path;
     std::filesystem::path tokenizer_path;
     std::filesystem::path config_path;
     std::filesystem::path state_path;
-    mllm::ModelFileVersion file_version;
     int32_t chunk_size;
-    bool use_mmap;
   };
 
   explicit Qwen3Service(Config&& config)
@@ -63,12 +63,12 @@ class Qwen3Service {
       state_.create();
       fmt::print("Generation state created\n");
     }
-    model_ = std::make_unique<Model>(qwen3_cfg_, state_, config_.chunk_size);
 
     mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadBeginEvent>();
     mllm::Timer load_model_timer;
-    auto model_params = mllm::load(config_.model_path, config_.file_version, mllm::kCPU, config_.use_mmap);
-    model_->load(model_params);
+    parameter_loader_ = std::make_unique<ParameterLoader>(config_.model_path);
+    model_ = std::make_unique<Model>(qwen3_cfg_, state_, *parameter_loader_, config_.chunk_size);
+    model_->loadFromDisk();
     mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadCompleteEvent>();
     fmt::print("Model loaded in {}ms\n", load_model_timer.elapsed_ms());
   }
@@ -118,6 +118,7 @@ class Qwen3Service {
   Config config_;
   mllm::models::qwen3::Qwen3Config qwen3_cfg_;
   mllm::models::qwen3::Qwen3Tokenizer qwen3_tokenizer_;
+  std::unique_ptr<ParameterLoader> parameter_loader_;
   std::unique_ptr<Model> model_;
   GenerationState state_;
 };
@@ -125,12 +126,10 @@ class Qwen3Service {
 MLLM_MAIN({
   auto& help = Argparse::add<bool>("-h|--help").help("Show help message");
   auto& model_path = Argparse::add<std::string>("-m|--model_path").help("Model path").required(true);
-  auto& model_version = Argparse::add<std::string>("-mv|--model_version").help("Model version").required(true);
   auto& tokenizer_path = Argparse::add<std::string>("-t|--tokenizer_path").help("Tokenizer directory").required(true);
   auto& config_path = Argparse::add<std::string>("-c|--config_path").help("Config path").required(true);
   auto& state_path = Argparse::add<std::string>("-sp|--state_path").help("State path").required(true);
   auto& chunk_size = Argparse::add<int32_t>("-cs|--chunk_size").help("Chunk size").def(32);
-  auto& use_mmap = Argparse::add<bool>("-um|--use_mmap").help("Use mmap").def(false);
   auto& trace_file = Argparse::add<std::string>("-tf|--trace_file").help("Trace file path to dump trace data");
   Argparse::parse(argc, argv);
 
@@ -156,9 +155,7 @@ MLLM_MAIN({
       .tokenizer_path = tokenizer_path.get(),
       .config_path = config_path.get(),
       .state_path = std::filesystem::path(state_path.get()),
-      .file_version = model_version.get() == "v2" ? mllm::ModelFileVersion::kV2 : mllm::ModelFileVersion::kV1,
       .chunk_size = chunk_size.get(),
-      .use_mmap = use_mmap.get(),
     });
     qwen3_service.load();
     qwen3_service.run();
