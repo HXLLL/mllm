@@ -1,11 +1,33 @@
 #include <iostream>
 #include <filesystem>
+#include <csignal>
 #include <fmt/core.h>
 #include <mllm/mllm.hpp>
 #include <mllm/utils/Timer.hpp>
 #include <mllm/models/qwen3_i/modeling_qwen3_i.hpp>
 #include <mllm/models/qwen3/tokenization_qwen3.hpp>
 #include "mllm/models/qwen3_i/generation_state.hpp"
+
+static std::string g_trace_file;
+
+static void exportTrace() {
+  if (!g_trace_file.empty()) {
+    mllm::Context::instance().tracer()->disable();
+    if (mllm::Context::instance().tracer()->exportToCSV(g_trace_file, false)) {
+      fmt::print("\nTrace data exported to: {}\n", g_trace_file);
+      fmt::print("Total events recorded: {}\n", mllm::Context::instance().tracer()->size());
+    } else {
+      fmt::print("\nFailed to export tracing data to CSV: {}\n", g_trace_file);
+    }
+  }
+}
+
+static void signalHandler(int sig) {
+  fmt::print("\nInterrupted (signal {})\n", sig);
+  exportTrace();
+  mllm::shutdownContext();
+  std::exit(128 + sig);
+}
 
 
 using mllm::Argparse;
@@ -106,12 +128,19 @@ MLLM_MAIN({
   auto& state_path = Argparse::add<std::string>("-sp|--state_path").help("State path").required(true);
   auto& chunk_size = Argparse::add<int32_t>("-cs|--chunk_size").help("Chunk size").def(32);
   auto& use_mmap = Argparse::add<bool>("-um|--use_mmap").help("Use mmap").def(false);
+  auto& trace_file = Argparse::add<std::string>("-tf|--trace_file").help("Trace file path to dump trace data");
   Argparse::parse(argc, argv);
 
   if (help.isSet()) {
     Argparse::printHelp();
     mllm::shutdownContext();
     return 0;
+  }
+
+  if (trace_file.isSet()) {
+    g_trace_file = trace_file.get();
+    std::signal(SIGINT, signalHandler);
+    mllm::Context::instance().tracer()->enable();
   }
 
 #ifdef MLLM_PERFETTO_ENABLE
@@ -138,6 +167,8 @@ MLLM_MAIN({
   mllm::perf::stop();
   mllm::perf::saveReport("qwen3.perf");
 #endif
+
+  exportTrace();
 
   // mllm::print("\n");
   // mllm::memoryReport();
