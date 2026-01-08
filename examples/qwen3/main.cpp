@@ -151,15 +151,15 @@ MLLM_MAIN({
 
   try {
     Qwen3Service qwen3_service(Qwen3Service::Config{
-      .model_path = model_path.get(),
-      .tokenizer_path = tokenizer_path.get(),
-      .config_path = config_path.get(),
-      .state_path = std::filesystem::path(state_path.get()),
-      .chunk_size = chunk_size.get(),
+        .model_path = model_path.get(),
+        .tokenizer_path = tokenizer_path.get(),
+        .config_path = config_path.get(),
+        .state_path = std::filesystem::path(state_path.get()),
+        .chunk_size = chunk_size.get(),
     });
     qwen3_service.load();
     qwen3_service.run();
-  } catch (const std::exception& e) { 
+  } catch (const std::exception& e) {
     fmt::print("\n❌ Error: {}\n[Errno] {} ({})\n{}\n", e.what(), errno, std::strerror(errno), std::string(60, '-'));
   }
 
