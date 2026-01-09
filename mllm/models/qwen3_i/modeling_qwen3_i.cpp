@@ -224,6 +224,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
 
     x = state_.getH(start_layer, chunk_start, len);
     for (size_t j = start_layer; j < num_layers_; ++j) {
+      fmt::print("Prefilling chunk {} layer {}\n", chunk_start, j);
       recordEvent<LayerBeginEvent>(j, len, chunk_start);
       auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
       auto& h = h2kv_result[0];
