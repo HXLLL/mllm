@@ -211,7 +211,6 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
     int len = chunk_end - chunk_start;
 
     int start_layer = state_.getMinWatermark(chunk_start, len);
-    MLLM_INFO("Prefilling chunk [{}/{}] from layer {}", i + 1, num_chunks, start_layer + 1);
 
     auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
     auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];

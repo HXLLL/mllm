@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 DATA_DIR="../data"
 OUTPUT_DIR="../experiments/figures"
+TRACE_DIR=f"{DATA_DIR}/trace"
 
 linestyles = ["-", "--", "dashdot"]
 marker_list = ["o", "s", "^", "v"]
@@ -81,7 +82,7 @@ def set_ylim_pad_auto(ax, ys):
     ax.set_ylim(lo - pad, hi + pad)
 
 def read_trace(path):
-    traces = pd.read_csv(os.path.join(DATA_DIR, path))
+    traces = pd.read_csv(os.path.join(TRACE_DIR, path))
     # Convert all numeric columns to int
     numeric_cols = traces.select_dtypes(include=['number']).columns
     traces[numeric_cols] = traces[numeric_cols].astype('Int64')
