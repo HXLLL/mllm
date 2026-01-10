@@ -240,7 +240,6 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
     state_.checkpoint();
     chunk_outputs.push_back(norm_(x));
 
-    // Log progress every 1/10
     if ((i + 1) % std::max(1, num_chunks / 10) == 0 || i == num_chunks - 1) {
       fmt::print("prefill {}/{}\n", i + 1, num_chunks);
     }

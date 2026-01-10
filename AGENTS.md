@@ -83,6 +83,7 @@ This is an experimental/academic project, not user-facing software. Optimize for
 ## Safety & Hygiene
 
 - Do not modify vendored/third_party unless requested
+- Unless necessary, do not modify code other than examples/qwen3/ and mllm/mllm/models/qwen3_i. if you need to do so, confirm it with the user.
 - Do not commit generated build outputs or large model files
 - Avoid refactors during bug fixes; fix minimally
 - Prefer existing libraries over new dependencies
