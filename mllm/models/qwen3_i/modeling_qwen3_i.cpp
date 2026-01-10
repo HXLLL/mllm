@@ -43,7 +43,8 @@ std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const s
 
 /** Qwen3Decoder Implementation **/
 
-Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int idx)
+Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, GenerationState& state,
+                           ParameterLoader& parameter_loader, int idx)
     : nn::Module(name),
       parameter_loader_(parameter_loader),
       layer_idx_(idx),
@@ -51,10 +52,14 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, Gene
       head_dim_(cfg.head_dim),
       num_attention_heads_(cfg.num_attention_heads),
       num_key_value_heads_(cfg.num_key_value_heads),
-      q_proj_(reg<nn::Linear>("self_attn.q_proj", cfg.hidden_size, cfg.head_dim * cfg.num_attention_heads, cfg.attention_bias, cfg.linear_impl_type)),
-      k_proj_(reg<nn::Linear>("self_attn.k_proj", cfg.hidden_size, cfg.head_dim * cfg.num_key_value_heads, cfg.attention_bias, cfg.linear_impl_type)),
-      v_proj_(reg<nn::Linear>("self_attn.v_proj", cfg.hidden_size, cfg.head_dim * cfg.num_key_value_heads, cfg.attention_bias, cfg.linear_impl_type)),
-      o_proj_(reg<nn::Linear>("self_attn.o_proj", cfg.head_dim * cfg.num_attention_heads, cfg.hidden_size, cfg.attention_bias, cfg.linear_impl_type)),
+      q_proj_(reg<nn::Linear>("self_attn.q_proj", cfg.hidden_size, cfg.head_dim * cfg.num_attention_heads, cfg.attention_bias,
+                              cfg.linear_impl_type)),
+      k_proj_(reg<nn::Linear>("self_attn.k_proj", cfg.hidden_size, cfg.head_dim * cfg.num_key_value_heads, cfg.attention_bias,
+                              cfg.linear_impl_type)),
+      v_proj_(reg<nn::Linear>("self_attn.v_proj", cfg.hidden_size, cfg.head_dim * cfg.num_key_value_heads, cfg.attention_bias,
+                              cfg.linear_impl_type)),
+      o_proj_(reg<nn::Linear>("self_attn.o_proj", cfg.head_dim * cfg.num_attention_heads, cfg.hidden_size, cfg.attention_bias,
+                              cfg.linear_impl_type)),
       rms_norm_q_(reg<nn::RMSNorm>("self_attn.q_norm", cfg.rms_norm_eps)),
       rms_norm_k_(reg<nn::RMSNorm>("self_attn.k_norm", cfg.rms_norm_eps)),
       q_rope_(reg<nn::RoPE>("self_attn.q_rope", cfg.rope_theta, cfg.max_position_embeddings)),
@@ -127,7 +132,7 @@ std::vector<Tensor> H2KV::forward(const std::vector<Tensor>& inputs, const std::
   query = q_rope_(query, sin_emb, cos_emb);
   key = k_rope_(key, sin_emb, cos_emb);
 
-  return { hidden_states, query, key, value };
+  return {hidden_states, query, key, value};
 }
 
 KV2H::KV2H(Qwen3Decoder& decoder, GenerationState& state)
@@ -148,7 +153,7 @@ std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::
   int offset = args[0].get<int>();
   const int count = hidden_states.shape()[1];
 
-  auto [cached_key, cached_value] = state_.getKV(layer_idx_, 0, offset + count);
+  auto [cached_key, cached_value] = state_.getKV({layer_idx_, 0, offset + count});
   MLLM_RT_ASSERT(cached_key.dtype() == kFloat32);
 
   // Compute attention scores with scaling
@@ -168,8 +173,13 @@ std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::
 
 /** Qwen3Text Implementation **/
 
-Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int chunk_size)
-    : nn::Module(name), parameter_loader_(parameter_loader), chunk_size_(chunk_size), num_layers_(cfg.num_hidden_layers), state_(state) {
+Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader,
+                     int chunk_size)
+    : nn::Module(name),
+      parameter_loader_(parameter_loader),
+      chunk_size_(chunk_size),
+      num_layers_(cfg.num_hidden_layers),
+      state_(state) {
   decode_blocks_ = reg<nn::ModuleListWithIdx<Qwen3Decoder>>("layers", num_layers_, cfg, state, parameter_loader);
   for (auto& block : decode_blocks_.list()) {
     h2kv_.emplace_back(block, state_);
@@ -185,9 +195,7 @@ void Qwen3Text::loadFromDisk() {
   parameter_loader_.loadTensor(prefix + "embed_tokens.weight");
   parameter_loader_.loadTensor(prefix + "norm.weight");
 
-  for (auto& block : decode_blocks_.list()) {
-    block.loadFromDisk();
-  }
+  for (auto& block : decode_blocks_.list()) { block.loadFromDisk(); }
 }
 
 std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
@@ -218,11 +226,11 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
     Tensor x;
     if (start_layer < 0) {
       x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
-      state_.updateH(0, chunk_start, len, x);
+      state_.updateH({0, chunk_start, len}, x);
       start_layer = 0;
     }
 
-    x = state_.getH(start_layer, chunk_start, len);
+    x = state_.getH({start_layer, chunk_start, len});
     for (size_t j = start_layer; j < num_layers_; ++j) {
       recordEvent<LayerBeginEvent>(j, len, chunk_start);
       auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
@@ -230,10 +238,10 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
       auto& q = h2kv_result[1];
       auto& k = h2kv_result[2];
       auto& v = h2kv_result[3];
-      state_.updateKV(j, chunk_start, len, k, v);
+      state_.updateKV({static_cast<int>(j), chunk_start, len}, k, v);
       x = kv2h_[j](h, q, k, AnyValue(chunk_start))[0];
       recordEvent<LayerCompleteEvent>(j, len, chunk_start);
-      state_.updateH(j + 1, chunk_start, len, x);
+      state_.updateH({static_cast<int>(j + 1), chunk_start, len}, x);
       state_.checkpoint();
     }
 
@@ -249,11 +257,11 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
 }
 
 Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int token_idx) {
-  if (state_.isPositionComplete(token_idx)) { return norm_(state_.getH(num_layers_, token_idx, 1)); }
+  if (state_.isPositionComplete(token_idx)) { return norm_(state_.getH({static_cast<int>(num_layers_), token_idx, 1})); }
 
   MLLM_RT_ASSERT_EQ(token_ids.shape()[1], 1);
   auto x = embedding_(token_ids);
-  state_.updateH(0, token_idx, 1, x);
+  state_.updateH({0, token_idx, 1}, x);
   for (size_t j = 0; j < num_layers_; ++j) {
     recordEvent<LayerBeginEvent>(j, 1, token_idx);
     auto h2kv_result = h2kv_[j](x, sin_emb, cos_emb);
@@ -261,10 +269,10 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
     auto& q = h2kv_result[1];
     auto& k = h2kv_result[2];
     auto& v = h2kv_result[3];
-    state_.updateKV(j, token_idx, 1, k, v);
+    state_.updateKV({static_cast<int>(j), token_idx, 1}, k, v);
     x = kv2h_[j](h, q, k, AnyValue(token_idx))[0];
     recordEvent<LayerCompleteEvent>(j, 1, token_idx);
-    state_.updateH(j + 1, token_idx, 1, x);
+    state_.updateH({static_cast<int>(j + 1), token_idx, 1}, x);
   }
   auto output = norm_(x);
   state_.checkpoint();
@@ -273,8 +281,12 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
 
 /* ARGeneration Implementation */
 
-Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int chunk_size)
-    : parameter_loader_(parameter_loader), cfg_(cfg), state_(state), llm_(reg<Qwen3Text>("model", cfg_, state_, parameter_loader_, chunk_size)) {
+Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, GenerationState& state,
+                                                           ParameterLoader& parameter_loader, int chunk_size)
+    : parameter_loader_(parameter_loader),
+      cfg_(cfg),
+      state_(state),
+      llm_(reg<Qwen3Text>("model", cfg_, state_, parameter_loader_, chunk_size)) {
   MLLM_INFO("Initializing intermittent Qwen3 model");
 
   eos_token_id_ = cfg_.end_of_text_token_id;
@@ -290,9 +302,7 @@ Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cf
 void Qwen3IntermittentForCausalLM::loadFromDisk() {
   // Load embedding, norm, and lm_head at startup (layers are loaded on-demand)
   llm_.loadFromDisk();
-  if (tie_word_embeddings_) {
-    parameter_loader_.loadTensor("lm_head_out.weight");
-  }
+  if (tie_word_embeddings_) { parameter_loader_.loadTensor("lm_head_out.weight"); }
   // 顶层调用 load()，递归加载 embedding/norm/lm_head 到 ops
   load(parameter_loader_.getParameterFile());
 }

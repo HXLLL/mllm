@@ -86,27 +86,27 @@ void GenerationState::initLoadedState() {
   h_loaded_.assign(layer_nums_ + 1, std::vector<bool>(max_length_, false));
 }
 
-void GenerationState::markLoaded(std::vector<std::vector<bool>>& loaded, int layer_idx, int offset, int count) {
-  for (int i = 0; i < count; ++i) { loaded[layer_idx][offset + i] = true; }
+void GenerationState::markLoaded(std::vector<std::vector<bool>>& loaded, const CacheRange& range) {
+  for (int i = 0; i < range.count; ++i) { loaded[range.layer_idx][range.offset + i] = true; }
 }
 
 void GenerationState::loadLayerKVCacheImpl(std::ifstream& file, std::vector<Tensor>& cache,
-                                           std::vector<std::vector<bool>>& loaded, int layer_idx, int offset, int count) {
-  MLLM_RT_ASSERT(layer_idx >= 0 && layer_idx < layer_nums_);
-  MLLM_RT_ASSERT(offset >= 0 && offset + count <= max_length_);
+                                           std::vector<std::vector<bool>>& loaded, const CacheRange& range) {
+  MLLM_RT_ASSERT(range.layer_idx >= 0 && range.layer_idx < layer_nums_);
+  MLLM_RT_ASSERT(range.offset >= 0 && range.end() <= max_length_);
 
   size_t entry_size = kv_dim_ * ELEMENT_SIZE;
   size_t head_stride = max_length_ * entry_size;
   size_t layer_stride = q_heads_ * head_stride;
 
   for (int h = 0; h < q_heads_; ++h) {
-    size_t file_offset = layer_idx * layer_stride + h * head_stride + offset * entry_size;
+    size_t file_offset = range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
     file.seekg(static_cast<std::streamoff>(file_offset));
-    auto ptr = cache[layer_idx].ptrAt<char>({0, h, offset, 0});
-    file.read(ptr, count * entry_size);
+    auto ptr = cache[range.layer_idx].ptrAt<char>({0, h, range.offset, 0});
+    file.read(ptr, range.count * entry_size);
   }
 
-  markLoaded(loaded, layer_idx, offset, count);
+  markLoaded(loaded, range);
 }
 
 void GenerationState::prepareForLayerwiseLoad() {
@@ -133,38 +133,38 @@ void GenerationState::prepareForLayerwiseLoad() {
   initLoadedState();
 }
 
-void GenerationState::loadLayerKCache(int layer_idx, int offset, int count) {
-  loadLayerKVCacheImpl(k_cache_file_, k_cache_, k_loaded_, layer_idx, offset, count);
+void GenerationState::loadLayerKCache(const CacheRange& range) {
+  loadLayerKVCacheImpl(k_cache_file_, k_cache_, k_loaded_, range);
 }
 
-void GenerationState::loadLayerVCache(int layer_idx, int offset, int count) {
-  loadLayerKVCacheImpl(v_cache_file_, v_cache_, v_loaded_, layer_idx, offset, count);
+void GenerationState::loadLayerVCache(const CacheRange& range) {
+  loadLayerKVCacheImpl(v_cache_file_, v_cache_, v_loaded_, range);
 }
 
-void GenerationState::loadLayerHCache(int layer_idx, int offset, int count) {
-  MLLM_RT_ASSERT(layer_idx >= 0 && layer_idx <= layer_nums_);
-  MLLM_RT_ASSERT(offset >= 0 && offset + count <= max_length_);
+void GenerationState::loadLayerHCache(const CacheRange& range) {
+  MLLM_RT_ASSERT(range.layer_idx >= 0 && range.layer_idx <= layer_nums_);
+  MLLM_RT_ASSERT(range.offset >= 0 && range.end() <= max_length_);
 
   size_t entry_size = hidden_size_ * ELEMENT_SIZE;
   size_t layer_stride = max_length_ * entry_size;
-  size_t file_offset = layer_idx * layer_stride + offset * entry_size;
+  size_t file_offset = range.layer_idx * layer_stride + range.offset * entry_size;
 
   h_cache_file_.seekg(static_cast<std::streamoff>(file_offset));
-  auto ptr = h_cache_[layer_idx].ptrAt<char>({0, offset, 0});
-  h_cache_file_.read(ptr, count * entry_size);
+  auto ptr = h_cache_[range.layer_idx].ptrAt<char>({0, range.offset, 0});
+  h_cache_file_.read(ptr, range.count * entry_size);
 
-  markLoaded(h_loaded_, layer_idx, offset, count);
+  markLoaded(h_loaded_, range);
 }
 
 void GenerationState::load() {
   prepareForLayerwiseLoad();
 
   for (int layer = 0; layer < layer_nums_; ++layer) {
-    loadLayerKCache(layer, 0, max_length_);
-    loadLayerVCache(layer, 0, max_length_);
-    loadLayerHCache(layer, 0, max_length_);
+    loadLayerKCache({layer, 0, max_length_});
+    loadLayerVCache({layer, 0, max_length_});
+    loadLayerHCache({layer, 0, max_length_});
   }
-  loadLayerHCache(layer_nums_, 0, max_length_);
+  loadLayerHCache({layer_nums_, 0, max_length_});
 
   auto tracer = Context::instance().tracer();
   tracer->record<StateLoadKCacheEvent>();
@@ -309,9 +309,9 @@ int GenerationState::getMinWatermark(int offset, int count) const {
 
 bool GenerationState::isPositionComplete(int pos) const { return layer_watermark_[pos] == layer_nums_; }
 
-void GenerationState::updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v) {
-  MLLM_RT_ASSERT(k.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
-  MLLM_RT_ASSERT(v.shape() == std::vector<int32_t>({1, kv_heads_, count, kv_dim_}));
+void GenerationState::updateKV(const CacheRange& range, const Tensor& k, const Tensor& v) {
+  MLLM_RT_ASSERT(k.shape() == std::vector<int32_t>({1, kv_heads_, range.count, kv_dim_}));
+  MLLM_RT_ASSERT(v.shape() == std::vector<int32_t>({1, kv_heads_, range.count, kv_dim_}));
 
   auto repeat_times = q_heads_ / kv_heads_;
 
@@ -319,29 +319,29 @@ void GenerationState::updateKV(int layer_idx, int offset, int count, const Tenso
     auto k_ptr = k.cptrAt<mllm_byte_t>({0, h, 0, 0});
     auto v_ptr = v.cptrAt<mllm_byte_t>({0, h, 0, 0});
     for (int r = 0; r < repeat_times; ++r) {
-      auto k_cache_ptr = k_cache_[layer_idx].ptrAt<mllm_byte_t>({0, h * repeat_times + r, offset, 0});
-      auto v_cache_ptr = v_cache_[layer_idx].ptrAt<mllm_byte_t>({0, h * repeat_times + r, offset, 0});
-      std::memcpy(k_cache_ptr, k_ptr, count * kv_dim_ * ELEMENT_SIZE);
-      std::memcpy(v_cache_ptr, v_ptr, count * kv_dim_ * ELEMENT_SIZE);
+      auto k_cache_ptr = k_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h * repeat_times + r, range.offset, 0});
+      auto v_cache_ptr = v_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h * repeat_times + r, range.offset, 0});
+      std::memcpy(k_cache_ptr, k_ptr, range.count * kv_dim_ * ELEMENT_SIZE);
+      std::memcpy(v_cache_ptr, v_ptr, range.count * kv_dim_ * ELEMENT_SIZE);
     }
   }
 
-  markLoaded(k_loaded_, layer_idx, offset, count);
-  markLoaded(v_loaded_, layer_idx, offset, count);
+  markLoaded(k_loaded_, range);
+  markLoaded(v_loaded_, range);
 }
 
-void GenerationState::updateH(int layer_idx, int offset, int count, const Tensor& h) {
-  MLLM_RT_ASSERT(h.shape() == std::vector<int32_t>({1, count, hidden_size_}) && h.dtype() == kFloat32);
+void GenerationState::updateH(const CacheRange& range, const Tensor& h) {
+  MLLM_RT_ASSERT(h.shape() == std::vector<int32_t>({1, range.count, hidden_size_}) && h.dtype() == kFloat32);
   auto h_ptr = h.cptrAt<mllm_byte_t>({0, 0, 0});
-  auto h_cache_ptr = h_cache_[layer_idx].ptrAt<mllm_byte_t>({0, offset, 0});
-  std::memcpy(h_cache_ptr, h_ptr, count * hidden_size_ * ELEMENT_SIZE);
-  for (int i = 0; i < count; ++i) { layer_watermark_[offset + i] = layer_idx; }
-  markLoaded(h_loaded_, layer_idx, offset, count);
+  auto h_cache_ptr = h_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, range.offset, 0});
+  std::memcpy(h_cache_ptr, h_ptr, range.count * hidden_size_ * ELEMENT_SIZE);
+  for (int i = 0; i < range.count; ++i) { layer_watermark_[range.offset + i] = range.layer_idx; }
+  markLoaded(h_loaded_, range);
 }
 
-Tensor GenerationState::getH(int layer_idx, int offset, int count) {
-  for (int i = 0; i < count; ++i) { MLLM_RT_ASSERT_EQ(h_loaded_[layer_idx][offset + i], true); }
-  return h_cache_[layer_idx][{0, {offset, offset + count}, kAll}];
+Tensor GenerationState::getH(const CacheRange& range) {
+  for (int i = 0; i < range.count; ++i) { MLLM_RT_ASSERT_EQ(h_loaded_[range.layer_idx][range.offset + i], true); }
+  return h_cache_[range.layer_idx][{0, {range.offset, range.end()}, kAll}];
 }
 
 std::array<Tensor, 2> GenerationState::getKV(int layer_idx) {
@@ -349,14 +349,14 @@ std::array<Tensor, 2> GenerationState::getKV(int layer_idx) {
   return {k_cache_[layer_idx][{0, kAll, kAll, kAll}], v_cache_[layer_idx][{0, kAll, kAll, kAll}]};
 }
 
-std::array<Tensor, 2> GenerationState::getKV(int layer_idx, int offset, int count) {
-  for (int i = 0; i < count; ++i) {
-    MLLM_RT_ASSERT_EQ(k_loaded_[layer_idx][offset + i], true);
-    MLLM_RT_ASSERT_EQ(v_loaded_[layer_idx][offset + i], true);
+std::array<Tensor, 2> GenerationState::getKV(const CacheRange& range) {
+  for (int i = 0; i < range.count; ++i) {
+    MLLM_RT_ASSERT_EQ(k_loaded_[range.layer_idx][range.offset + i], true);
+    MLLM_RT_ASSERT_EQ(v_loaded_[range.layer_idx][range.offset + i], true);
   }
   return {{
-      k_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
-      v_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
+      k_cache_[range.layer_idx][{0, kAll, {range.offset, range.end()}, kAll}],
+      v_cache_[range.layer_idx][{0, kAll, {range.offset, range.end()}, kAll}],
   }};
 }
 

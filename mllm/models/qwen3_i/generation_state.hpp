@@ -8,6 +8,15 @@
 
 namespace mllm::models::qwen3_i {
 
+struct CacheRange {
+  int layer_idx;
+  int offset;
+  int count;
+
+  [[nodiscard]] int end() const { return offset + count; }
+  [[nodiscard]] bool isEmpty() const { return count <= 0; }
+};
+
 class GenerationState {
  public:
   using Qwen3Config = models::qwen3::Qwen3Config;
@@ -28,18 +37,18 @@ class GenerationState {
   [[nodiscard]] int getMinWatermark(int offset, int count) const;
   [[nodiscard]] bool isPositionComplete(int pos) const;
 
-  void updateKV(int layer_idx, int offset, int count, const Tensor& k, const Tensor& v);
+  void updateKV(const CacheRange& range, const Tensor& k, const Tensor& v);
   [[nodiscard]] std::array<Tensor, 2> getKV(int layer_idx);
-  [[nodiscard]] std::array<Tensor, 2> getKV(int layer_idx, int offset, int count);
+  [[nodiscard]] std::array<Tensor, 2> getKV(const CacheRange& range);
 
-  void updateH(int layer_idx, int offset, int count, const Tensor& h);
-  Tensor getH(int layer_idx, int offset, int count);
+  void updateH(const CacheRange& range, const Tensor& h);
+  Tensor getH(const CacheRange& range);
 
   // Layerwise loading interface
   void prepareForLayerwiseLoad();
-  void loadLayerKCache(int layer_idx, int offset, int count);
-  void loadLayerVCache(int layer_idx, int offset, int count);
-  void loadLayerHCache(int layer_idx, int offset, int count);
+  void loadLayerKCache(const CacheRange& range);
+  void loadLayerVCache(const CacheRange& range);
+  void loadLayerHCache(const CacheRange& range);
 
  private:
   const size_t ELEMENT_SIZE = bytesOfType(kFloat32) / lanesOfType(kFloat32);
@@ -58,8 +67,8 @@ class GenerationState {
   void allocateCaches();
   void initLoadedState();
   void loadLayerKVCacheImpl(std::ifstream& file, std::vector<Tensor>& cache, std::vector<std::vector<bool>>& loaded,
-                            int layer_idx, int offset, int count);
-  void markLoaded(std::vector<std::vector<bool>>& loaded, int layer_idx, int offset, int count);
+                            const CacheRange& range);
+  void markLoaded(std::vector<std::vector<bool>>& loaded, const CacheRange& range);
 
   std::filesystem::path path_;
 
