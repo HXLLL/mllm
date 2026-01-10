@@ -17,9 +17,7 @@ template<typename StreamType>
 static inline StreamType open_stream_impl(const fs::path& path, const char* op_desc, auto&&... args) {
   StreamType stream;
   stream.open(path, std::forward<decltype(args)>(args)...);
-  if (!stream.is_open()) {
-    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {} for {}", path.string(), op_desc);
-  }
+  if (!stream.is_open()) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {} for {}", path.string(), op_desc); }
   return stream;
 }
 
@@ -39,15 +37,11 @@ static inline std::fstream open_fstream(const fs::path& path, Args&&... args) {
 }
 
 static inline void preallocate_cache_file(const fs::path& dir, const std::string& filename, size_t size) {
-  if (!fs::exists(dir)) {
-    fs::create_directories(dir);
-  }
+  if (!fs::exists(dir)) { fs::create_directories(dir); }
 
   auto filepath = dir / filename;
   int fd = open(filepath.c_str(), O_CREAT | O_WRONLY, 0644);
-  if (fd < 0) {
-    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to create file {}", filepath.string());
-  }
+  if (fd < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to create file {}", filepath.string()); }
 
   if (fallocate(fd, 0, 0, size) != 0) {
     close(fd);
@@ -74,65 +68,7 @@ GenerationState::GenerationState(const Qwen3Config& cfg, const fs::path& path)
       kv_dim_(cfg.head_dim),
       hidden_size_(cfg.hidden_size) {}
 
-void GenerationState::load() {
-  auto tracer = Context::instance().tracer();
-  tracer->record<StateLoadBeginEvent>();
-  MLLM_INFO("GenerationState: Loading state from {}", path_.string());
-
-  loadMetadata();
-  tracer->record<StateLoadMetadataEvent>();
-
-  layer_watermark_.resize(max_length_);
-
-  {
-    auto watermark_file = open_ifstream(path_ / "layer_watermark.bin", std::ios::binary);
-    watermark_file.read(reinterpret_cast<char*>(layer_watermark_.data()), max_length_);
-  }
-
-  last_saved_watermark_ = layer_watermark_;
-  tracer->record<StateLoadWatermarkEvent>();
-
-  {
-    auto k_cache_file = open_ifstream(path_ / "k_cache.bin", std::ios::binary);
-    k_cache_.reserve(layer_nums_);
-    for (int i = 0; i < layer_nums_; ++i) {
-      k_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
-      auto k_ptr = k_cache_[i].ptrAt<char>({0, 0, 0, 0});
-      k_cache_file.read(k_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
-    }
-  }
-  tracer->record<StateLoadKCacheEvent>();
-
-  {
-    auto v_cache_file = open_ifstream(path_ / "v_cache.bin", std::ios::binary);
-    v_cache_.reserve(layer_nums_);
-    for (int i = 0; i < layer_nums_; ++i) {
-      v_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
-      auto v_ptr = v_cache_[i].ptrAt<char>({0, 0, 0, 0});
-      v_cache_file.read(v_ptr, max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE);
-    }
-  }
-  tracer->record<StateLoadVCacheEvent>();
-
-  {
-    auto h_cache_file = open_ifstream(path_ / "h_cache.bin", std::ios::binary);
-    h_cache_.reserve(layer_nums_ + 1);
-    for (int i = 0; i < layer_nums_ + 1; ++i) {
-      h_cache_.emplace_back(Tensor::empty({1, max_length_, hidden_size_}, kFloat32, kCPU).alloc());
-      auto h_ptr = h_cache_[i].ptrAt<char>({0, 0, 0});
-      h_cache_file.read(h_ptr, max_length_ * hidden_size_ * ELEMENT_SIZE);
-    }
-  }
-  tracer->record<StateLoadHCacheEvent>();
-
-  tracer->record<StateLoadCompleteEvent>();
-}
-
-void GenerationState::create() {
-  input_tokens_ = {};
-  layer_watermark_.assign(max_length_, -1);
-  last_saved_watermark_.assign(max_length_, -1);
-
+void GenerationState::allocateCaches() {
   k_cache_.reserve(layer_nums_);
   v_cache_.reserve(layer_nums_);
   h_cache_.reserve(layer_nums_ + 1);
@@ -142,6 +78,107 @@ void GenerationState::create() {
     h_cache_.emplace_back(Tensor::empty({1, max_length_, hidden_size_}, kFloat32, kCPU).alloc());
   }
   h_cache_.emplace_back(Tensor::empty({1, max_length_, hidden_size_}, kFloat32, kCPU).alloc());
+}
+
+void GenerationState::initLoadedState() {
+  k_loaded_.assign(layer_nums_, std::vector<bool>(max_length_, false));
+  v_loaded_.assign(layer_nums_, std::vector<bool>(max_length_, false));
+  h_loaded_.assign(layer_nums_ + 1, std::vector<bool>(max_length_, false));
+}
+
+void GenerationState::markLoaded(std::vector<std::vector<bool>>& loaded, int layer_idx, int offset, int count) {
+  for (int i = 0; i < count; ++i) { loaded[layer_idx][offset + i] = true; }
+}
+
+void GenerationState::loadLayerKVCacheImpl(std::ifstream& file, std::vector<Tensor>& cache,
+                                           std::vector<std::vector<bool>>& loaded, int layer_idx, int offset, int count) {
+  MLLM_RT_ASSERT(layer_idx >= 0 && layer_idx < layer_nums_);
+  MLLM_RT_ASSERT(offset >= 0 && offset + count <= max_length_);
+
+  size_t entry_size = kv_dim_ * ELEMENT_SIZE;
+  size_t head_stride = max_length_ * entry_size;
+  size_t layer_stride = q_heads_ * head_stride;
+
+  for (int h = 0; h < q_heads_; ++h) {
+    size_t file_offset = layer_idx * layer_stride + h * head_stride + offset * entry_size;
+    file.seekg(static_cast<std::streamoff>(file_offset));
+    auto ptr = cache[layer_idx].ptrAt<char>({0, h, offset, 0});
+    file.read(ptr, count * entry_size);
+  }
+
+  markLoaded(loaded, layer_idx, offset, count);
+}
+
+void GenerationState::prepareForLayerwiseLoad() {
+  auto tracer = Context::instance().tracer();
+  tracer->record<StateLoadBeginEvent>();
+  MLLM_INFO("GenerationState: Preparing layerwise load from {}", path_.string());
+
+  loadMetadata();
+  tracer->record<StateLoadMetadataEvent>();
+
+  layer_watermark_.resize(max_length_);
+  {
+    auto watermark_file = open_ifstream(path_ / "layer_watermark.bin", std::ios::binary);
+    watermark_file.read(reinterpret_cast<char*>(layer_watermark_.data()), max_length_);
+  }
+  last_saved_watermark_ = layer_watermark_;
+  tracer->record<StateLoadWatermarkEvent>();
+
+  k_cache_file_ = open_ifstream(path_ / "k_cache.bin", std::ios::binary);
+  v_cache_file_ = open_ifstream(path_ / "v_cache.bin", std::ios::binary);
+  h_cache_file_ = open_ifstream(path_ / "h_cache.bin", std::ios::binary);
+
+  allocateCaches();
+  initLoadedState();
+}
+
+void GenerationState::loadLayerKCache(int layer_idx, int offset, int count) {
+  loadLayerKVCacheImpl(k_cache_file_, k_cache_, k_loaded_, layer_idx, offset, count);
+}
+
+void GenerationState::loadLayerVCache(int layer_idx, int offset, int count) {
+  loadLayerKVCacheImpl(v_cache_file_, v_cache_, v_loaded_, layer_idx, offset, count);
+}
+
+void GenerationState::loadLayerHCache(int layer_idx, int offset, int count) {
+  MLLM_RT_ASSERT(layer_idx >= 0 && layer_idx <= layer_nums_);
+  MLLM_RT_ASSERT(offset >= 0 && offset + count <= max_length_);
+
+  size_t entry_size = hidden_size_ * ELEMENT_SIZE;
+  size_t layer_stride = max_length_ * entry_size;
+  size_t file_offset = layer_idx * layer_stride + offset * entry_size;
+
+  h_cache_file_.seekg(static_cast<std::streamoff>(file_offset));
+  auto ptr = h_cache_[layer_idx].ptrAt<char>({0, offset, 0});
+  h_cache_file_.read(ptr, count * entry_size);
+
+  markLoaded(h_loaded_, layer_idx, offset, count);
+}
+
+void GenerationState::load() {
+  prepareForLayerwiseLoad();
+
+  for (int layer = 0; layer < layer_nums_; ++layer) {
+    loadLayerKCache(layer, 0, max_length_);
+    loadLayerVCache(layer, 0, max_length_);
+    loadLayerHCache(layer, 0, max_length_);
+  }
+  loadLayerHCache(layer_nums_, 0, max_length_);
+
+  auto tracer = Context::instance().tracer();
+  tracer->record<StateLoadKCacheEvent>();
+  tracer->record<StateLoadVCacheEvent>();
+  tracer->record<StateLoadHCacheEvent>();
+  tracer->record<StateLoadCompleteEvent>();
+}
+
+void GenerationState::create() {
+  input_tokens_ = {};
+  layer_watermark_.assign(max_length_, -1);
+  last_saved_watermark_.assign(max_length_, -1);
+
+  allocateCaches();
 
   size_t kv_cache_size = static_cast<size_t>(layer_nums_) * max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE;
   size_t h_cache_size = static_cast<size_t>(layer_nums_ + 1) * max_length_ * hidden_size_ * ELEMENT_SIZE;
@@ -149,6 +186,8 @@ void GenerationState::create() {
   preallocate_cache_file(path_, "k_cache.bin", kv_cache_size);
   preallocate_cache_file(path_, "v_cache.bin", kv_cache_size);
   preallocate_cache_file(path_, "h_cache.bin", h_cache_size);
+
+  initLoadedState();
 
   checkpoint();
 }
@@ -158,15 +197,11 @@ void GenerationState::create() {
 std::pair<int, int> GenerationState::findWriteRange(const std::function<bool(int)>& shouldWrite) const {
   int pos = 0;
   // Skip positions that don't need writing
-  while (pos < max_length_ && !shouldWrite(pos)) {
-    pos++;
-  }
+  while (pos < max_length_ && !shouldWrite(pos)) { pos++; }
 
   int start_pos = pos;
   // Count consecutive positions that need writing
-  while (pos < max_length_ && shouldWrite(pos)) {
-    pos++;
-  }
+  while (pos < max_length_ && shouldWrite(pos)) { pos++; }
   return {start_pos, pos - start_pos};
 }
 
@@ -191,8 +226,7 @@ void GenerationState::writeKVCacheLayer(std::fstream& file, const Tensor& cache,
   size_t head_stride = max_length_ * kv_entry_size;
   size_t layer_stride = static_cast<size_t>(layer) * q_heads_ * head_stride;
   for (int h = 0; h < q_heads_; ++h) {
-    size_t offset = layer_stride + static_cast<size_t>(h) * head_stride +
-                    static_cast<size_t>(start_pos) * kv_entry_size;
+    size_t offset = layer_stride + static_cast<size_t>(h) * head_stride + static_cast<size_t>(start_pos) * kv_entry_size;
     file.seekp(offset);
     auto ptr = cache.cptrAt<char>({0, h, start_pos, 0});
     file.write(ptr, count * kv_entry_size);
@@ -203,9 +237,7 @@ void GenerationState::checkpoint() {
   auto tracer = Context::instance().tracer();
   tracer->record<CheckpointBeginEvent>();
 
-  if (!fs::exists(path_)) {
-    fs::create_directories(path_);
-  }
+  if (!fs::exists(path_)) { fs::create_directories(path_); }
 
   saveMetadata();
   tracer->record<CheckpointMetadataEvent>();
@@ -219,9 +251,7 @@ void GenerationState::checkpoint() {
     auto h_cache_file = open_fstream(path_ / "h_cache.bin", std::ios::binary | std::ios::in | std::ios::out);
     tracer->record<CheckpointFilesOpenEvent>();
 
-    for (int layer = 0; layer <= layer_nums_; ++layer) {
-      count += writeHCacheLayer(h_cache_file, layer);
-    }
+    for (int layer = 0; layer <= layer_nums_; ++layer) { count += writeHCacheLayer(h_cache_file, layer); }
     tracer->record<CheckpointHCacheWriteEvent>();
 
     for (int layer = 0; layer < layer_nums_; ++layer) {
@@ -247,7 +277,7 @@ void GenerationState::checkpoint() {
     auto watermark_file = open_ofstream(path_ / "layer_watermark.bin", std::ios::binary);
     watermark_file.write(reinterpret_cast<const char*>(layer_watermark_.data()), max_length_);
     watermark_file.flush();
-  } // RAII: file closed here
+  }  // RAII: file closed here
   fsync_path(path_ / "layer_watermark.bin");
   tracer->record<CheckpointWatermarkEvent>();
 
@@ -295,6 +325,9 @@ void GenerationState::updateKV(int layer_idx, int offset, int count, const Tenso
       std::memcpy(v_cache_ptr, v_ptr, count * kv_dim_ * ELEMENT_SIZE);
     }
   }
+
+  markLoaded(k_loaded_, layer_idx, offset, count);
+  markLoaded(v_loaded_, layer_idx, offset, count);
 }
 
 void GenerationState::updateH(int layer_idx, int offset, int count, const Tensor& h) {
@@ -303,9 +336,11 @@ void GenerationState::updateH(int layer_idx, int offset, int count, const Tensor
   auto h_cache_ptr = h_cache_[layer_idx].ptrAt<mllm_byte_t>({0, offset, 0});
   std::memcpy(h_cache_ptr, h_ptr, count * hidden_size_ * ELEMENT_SIZE);
   for (int i = 0; i < count; ++i) { layer_watermark_[offset + i] = layer_idx; }
+  markLoaded(h_loaded_, layer_idx, offset, count);
 }
 
 Tensor GenerationState::getH(int layer_idx, int offset, int count) {
+  for (int i = 0; i < count; ++i) { MLLM_RT_ASSERT_EQ(h_loaded_[layer_idx][offset + i], true); }
   return h_cache_[layer_idx][{0, {offset, offset + count}, kAll}];
 }
 
@@ -315,6 +350,10 @@ std::array<Tensor, 2> GenerationState::getKV(int layer_idx) {
 }
 
 std::array<Tensor, 2> GenerationState::getKV(int layer_idx, int offset, int count) {
+  for (int i = 0; i < count; ++i) {
+    MLLM_RT_ASSERT_EQ(k_loaded_[layer_idx][offset + i], true);
+    MLLM_RT_ASSERT_EQ(v_loaded_[layer_idx][offset + i], true);
+  }
   return {{
       k_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
       v_cache_[layer_idx][{0, kAll, {offset, offset + count}, kAll}],
