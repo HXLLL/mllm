@@ -66,9 +66,15 @@ class GenerationState {
 
   void allocateCaches();
   void initLoadedState();
-  void loadLayerKVCacheImpl(std::ifstream& file, std::vector<Tensor>& cache, std::vector<std::vector<bool>>& loaded,
+  void loadLayerKVCacheImpl(std::ifstream& file, std::vector<Tensor>& cache, std::vector<uint8_t>& loaded,
                             const CacheRange& range);
-  void markLoaded(std::vector<std::vector<bool>>& loaded, const CacheRange& range);
+  void markLoaded(std::vector<uint8_t>& loaded, const CacheRange& range);
+
+  // Helper: convert 2D (layer, pos) to 1D index for k/v_loaded
+  [[nodiscard]] inline size_t kvLoadedIndex(int layer, int pos) const { return static_cast<size_t>(layer) * max_length_ + pos; }
+
+  // Helper: convert 2D (layer, pos) to 1D index for h_loaded (layer_nums_ + 1 layers)
+  [[nodiscard]] inline size_t hLoadedIndex(int layer, int pos) const { return static_cast<size_t>(layer) * max_length_ + pos; }
 
   std::filesystem::path path_;
 
@@ -92,9 +98,9 @@ class GenerationState {
   std::ifstream v_cache_file_;
   std::ifstream h_cache_file_;
 
-  std::vector<std::vector<bool>> k_loaded_;  // [layer_nums_][max_length_]
-  std::vector<std::vector<bool>> v_loaded_;  // [layer_nums_][max_length_]
-  std::vector<std::vector<bool>> h_loaded_;  // [layer_nums_ + 1][max_length_]
+  std::vector<uint8_t> k_loaded_;  // [layer_nums_ * max_length_]
+  std::vector<uint8_t> v_loaded_;  // [layer_nums_ * max_length_]
+  std::vector<uint8_t> h_loaded_;  // [(layer_nums_ + 1) * max_length_]
 };
 
 }  // namespace mllm::models::qwen3_i

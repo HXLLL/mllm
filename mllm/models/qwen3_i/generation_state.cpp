@@ -81,17 +81,18 @@ void GenerationState::allocateCaches() {
 }
 
 void GenerationState::initLoadedState() {
-  k_loaded_.assign(layer_nums_, std::vector<bool>(max_length_, false));
-  v_loaded_.assign(layer_nums_, std::vector<bool>(max_length_, false));
-  h_loaded_.assign(layer_nums_ + 1, std::vector<bool>(max_length_, false));
+  k_loaded_.assign(layer_nums_ * max_length_, 0);
+  v_loaded_.assign(layer_nums_ * max_length_, 0);
+  h_loaded_.assign((layer_nums_ + 1) * max_length_, 0);
 }
 
-void GenerationState::markLoaded(std::vector<std::vector<bool>>& loaded, const CacheRange& range) {
-  for (int i = 0; i < range.count; ++i) { loaded[range.layer_idx][range.offset + i] = true; }
+void GenerationState::markLoaded(std::vector<uint8_t>& loaded, const CacheRange& range) {
+  size_t base_idx = range.layer_idx * max_length_;
+  for (int i = 0; i < range.count; ++i) { loaded[base_idx + range.offset + i] = 1; }
 }
 
-void GenerationState::loadLayerKVCacheImpl(std::ifstream& file, std::vector<Tensor>& cache,
-                                           std::vector<std::vector<bool>>& loaded, const CacheRange& range) {
+void GenerationState::loadLayerKVCacheImpl(std::ifstream& file, std::vector<Tensor>& cache, std::vector<uint8_t>& loaded,
+                                           const CacheRange& range) {
   MLLM_RT_ASSERT(range.layer_idx >= 0 && range.layer_idx < layer_nums_);
   MLLM_RT_ASSERT(range.offset >= 0 && range.end() <= max_length_);
 
