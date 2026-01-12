@@ -350,6 +350,8 @@ void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& 
   int max_length = args.count("max_length") ? args.at("max_length").get<int>() : max_length_;
   int eos_token_id = args.count("eos_token_id") ? args.at("eos_token_id").get<int>() : eos_token_id_;
   bool do_sample = args.count("do_sample") ? args.at("do_sample").get<bool>() : do_sample_;
+  int max_decode_tokens = args.count("max_decode_tokens") ? args.at("max_decode_tokens").get<int>() : max_length;
+  bool ignore_eos = args.count("ignore_eos") ? args.at("ignore_eos").get<bool>() : false;
   bool use_sampling = do_sample || (temperature != 1.0f) || (top_k > 0) || (top_p > 0.0f);
 
   auto predict_next_token = [&](Tensor& logits) {
@@ -381,7 +383,8 @@ void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& 
 
   ARGenerationOutputPast decode_input = prefill_input;
   decodeEventStartTimePoint();
-  for (int i = 0; i < max_length && next_token != eos_token_id; ++i, ++ar_steps_) {
+  for (int i = 0; i < max_decode_tokens; ++i, ++ar_steps_) {
+    if (!ignore_eos && next_token == eos_token_id) { break; }
     decode_input["sequence"] = Tensor::empty({1, 1}, kInt64, prefill_input["sequence"].device()).alloc();
     decode_input["sequence"].at<mllm_int64_t>({0, 0}) = next_token;
     next_token = do_forward(decode_input);

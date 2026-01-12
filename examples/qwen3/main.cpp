@@ -32,7 +32,6 @@ static void signalHandler(int sig) {
   std::exit(128 + sig);
 }
 
-
 using mllm::Argparse;
 
 class Qwen3Service {
@@ -48,6 +47,8 @@ class Qwen3Service {
     std::filesystem::path state_path;
     std::optional<std::filesystem::path> input_file;
     int32_t chunk_size;
+    int32_t max_decode_tokens;
+    bool ignore_eos;
   };
 
   explicit Qwen3Service(Config&& config)
@@ -92,7 +93,11 @@ class Qwen3Service {
       state_.start(inputs["sequence"]);
     }
 
-    model_->streamGenerate(inputs, {},
+    mllm::models::ARGenerationArgs gen_args;
+    if (config_.max_decode_tokens > 0) { gen_args["max_decode_tokens"] = mllm::AnyValue(config_.max_decode_tokens); }
+    if (config_.ignore_eos) { gen_args["ignore_eos"] = mllm::AnyValue(true); }
+
+    model_->streamGenerate(inputs, gen_args,
                            [&](int64_t token_id) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; });
     state_.checkpoint();
 
@@ -148,6 +153,9 @@ MLLM_MAIN({
   auto& state_path = Argparse::add<std::string>("-sp|--state_path").help("State path").required(true);
   auto& input_file = Argparse::add<std::string>("-i|--input").help("Input file path (read prompt from file)");
   auto& chunk_size = Argparse::add<int32_t>("-cs|--chunk_size").help("Chunk size").def(32);
+  auto& max_decode_tokens =
+      Argparse::add<int32_t>("-mdt|--max_decode_tokens").help("Maximum decode tokens (0=no limit)").def(0);
+  auto& ignore_eos = Argparse::add<bool>("-ie|--ignore_eos").help("Ignore EOS token").def(false);
   auto& trace_file = Argparse::add<std::string>("-tf|--trace_file").help("Trace file path to dump trace data");
   Argparse::parse(argc, argv);
 
@@ -175,6 +183,8 @@ MLLM_MAIN({
         .state_path = std::filesystem::path(state_path.get()),
         .input_file = input_file.isSet() ? std::optional<std::filesystem::path>(input_file.get()) : std::nullopt,
         .chunk_size = chunk_size.get(),
+        .max_decode_tokens = max_decode_tokens.get(),
+        .ignore_eos = ignore_eos.get(),
     };
     Qwen3Service qwen3_service(std::move(cfg));
     qwen3_service.load();

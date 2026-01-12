@@ -6,6 +6,8 @@ echo 3 | sudo tee /proc/sys/vm/drop_caches
 # Default values
 CS=${CS:-32}
 MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
+MAX_DECODE_TOKENS=${MAX_DECODE_TOKENS:-0}
+IGNORE_EOS=${IGNORE_EOS:-false}
 
 # Model base directory
 MODEL_BASE="/home/xiaolong/llms/${MODEL_TYPE}"
@@ -27,4 +29,6 @@ echo "${PROMPT}" | ./build/bin/mllm-qwen3-runner \
   -t "${MODEL_BASE}/tokenizer.json" \
   --state_path "${STATE_PATH}/qwen3-runner" \
   -cs "${CS}" \
-  -tf "${TRACE_FOLDER}/1.csv"
+  -tf "${TRACE_FOLDER}/1.csv" \
+  -mdt "${MAX_DECODE_TOKENS}" \
+  $([ "$IGNORE_EOS" = "true" ] && echo "-ie")
