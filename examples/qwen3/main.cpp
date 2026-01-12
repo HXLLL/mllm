@@ -88,14 +88,14 @@ class Qwen3Service {
       inputs["sequence"] = buildSequenceFromIds(old_input);
       replayTokens(old_input);
     } else {
-      std::string prompt_text = getPrompt_();
+      std::string prompt_text = getPrompt();
       inputs = qwen3_tokenizer_.convertMessage({.prompt = prompt_text});
       state_.start(inputs["sequence"]);
     }
 
     mllm::models::ARGenerationArgs gen_args;
-    if (config_.max_decode_tokens > 0) { gen_args["max_decode_tokens"] = mllm::AnyValue(config_.max_decode_tokens); }
-    if (config_.ignore_eos) { gen_args["ignore_eos"] = mllm::AnyValue(true); }
+    gen_args["max_decode_tokens"] = mllm::AnyValue(config_.max_decode_tokens);
+    gen_args["ignore_eos"] = mllm::AnyValue(config_.ignore_eos);
 
     model_->streamGenerate(inputs, gen_args,
                            [&](int64_t token_id) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; });
@@ -119,7 +119,7 @@ class Qwen3Service {
     for (int64_t token_id : tokens) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; }
   };
 
-  std::string getPrompt_() {
+  std::string getPrompt() {
     if (config_.input_file.has_value()) {
       fmt::print("💬 Reading from file: {}\n", config_.input_file->string());
       std::ifstream file(config_.input_file->string());
@@ -171,10 +171,6 @@ MLLM_MAIN({
     mllm::Context::instance().tracer()->enable();
   }
 
-#ifdef MLLM_PERFETTO_ENABLE
-  mllm::perf::start();
-#endif
-
   try {
     Qwen3Service::Config cfg{
         .model_path = model_path.get(),
@@ -193,13 +189,5 @@ MLLM_MAIN({
     fmt::print("\n❌ Error: {}\n[Errno] {} ({})\n{}\n", e.what(), errno, std::strerror(errno), std::string(60, '-'));
   }
 
-#ifdef MLLM_PERFETTO_ENABLE
-  mllm::perf::stop();
-  mllm::perf::saveReport("qwen3.perf");
-#endif
-
   exportTrace();
-
-  // mllm::print("\n");
-  // mllm::memoryReport();
 })

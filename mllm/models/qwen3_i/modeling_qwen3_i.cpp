@@ -354,6 +354,10 @@ void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& 
   bool ignore_eos = args.count("ignore_eos") ? args.at("ignore_eos").get<bool>() : false;
   bool use_sampling = do_sample || (temperature != 1.0f) || (top_k > 0) || (top_p > 0.0f);
 
+  if (max_decode_tokens == 0) {
+    max_decode_tokens = max_length;
+  }
+
   auto predict_next_token = [&](Tensor& logits) {
     if (use_sampling) {
       if (top_k > 0) {
