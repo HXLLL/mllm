@@ -91,6 +91,11 @@ void GenerationState::markLoaded(std::vector<uint8_t>& loaded, const CacheRange&
   for (int i = 0; i < range.count; ++i) { loaded[base_idx + range.offset + i] = 1; }
 }
 
+void GenerationState::assertRangeLoaded(const std::vector<uint8_t>& loaded, const CacheRange& range) const {
+  size_t base_idx = range.layer_idx * max_length_;
+  for (int i = 0; i < range.count; ++i) { MLLM_RT_ASSERT_EQ(loaded[base_idx + range.offset + i], 1); }
+}
+
 void GenerationState::loadLayerKVCacheImpl(std::ifstream& file, std::vector<Tensor>& cache, std::vector<uint8_t>& loaded,
                                            const CacheRange& range) {
   MLLM_RT_ASSERT(range.layer_idx >= 0 && range.layer_idx < layer_nums_);
@@ -341,7 +346,7 @@ void GenerationState::updateH(const CacheRange& range, const Tensor& h) {
 }
 
 Tensor GenerationState::getH(const CacheRange& range) {
-  for (int i = 0; i < range.count; ++i) { MLLM_RT_ASSERT_EQ(h_loaded_[range.layer_idx][range.offset + i], true); }
+  assertRangeLoaded(h_loaded_, range);
   return h_cache_[range.layer_idx][{0, {range.offset, range.end()}, kAll}];
 }
 
@@ -351,10 +356,8 @@ std::array<Tensor, 2> GenerationState::getKV(int layer_idx) {
 }
 
 std::array<Tensor, 2> GenerationState::getKV(const CacheRange& range) {
-  for (int i = 0; i < range.count; ++i) {
-    MLLM_RT_ASSERT_EQ(k_loaded_[range.layer_idx][range.offset + i], true);
-    MLLM_RT_ASSERT_EQ(v_loaded_[range.layer_idx][range.offset + i], true);
-  }
+  assertRangeLoaded(k_loaded_, range);
+  assertRangeLoaded(v_loaded_, range);
   return {{
       k_cache_[range.layer_idx][{0, kAll, {range.offset, range.end()}, kAll}],
       v_cache_[range.layer_idx][{0, kAll, {range.offset, range.end()}, kAll}],

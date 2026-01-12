@@ -69,6 +69,7 @@ class GenerationState {
   void loadLayerKVCacheImpl(std::ifstream& file, std::vector<Tensor>& cache, std::vector<uint8_t>& loaded,
                             const CacheRange& range);
   void markLoaded(std::vector<uint8_t>& loaded, const CacheRange& range);
+  void assertRangeLoaded(const std::vector<uint8_t>& loaded, const CacheRange& range) const;
 
   // Helper: convert 2D (layer, pos) to 1D index for k/v_loaded
   [[nodiscard]] inline size_t kvLoadedIndex(int layer, int pos) const { return static_cast<size_t>(layer) * max_length_ + pos; }
