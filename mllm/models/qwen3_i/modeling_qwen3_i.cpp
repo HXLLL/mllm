@@ -198,6 +198,23 @@ void Qwen3Text::loadFromDisk() {
   for (auto& block : decode_blocks_.list()) { block.loadFromDisk(); }
 }
 
+std::vector<std::string> Qwen3Text::collectLayerParamNames(int layer) const {
+  auto prefix = getModuleName() + ".layers." + std::to_string(layer) + ".";
+  return {
+      prefix + "self_attn.q_proj.weight",
+      prefix + "self_attn.k_proj.weight",
+      prefix + "self_attn.v_proj.weight",
+      prefix + "self_attn.o_proj.weight",
+      prefix + "self_attn.q_norm.weight",
+      prefix + "self_attn.k_norm.weight",
+      prefix + "input_layernorm.weight",
+      prefix + "post_attention_layernorm.weight",
+      prefix + "mlp.gate_proj.weight",
+      prefix + "mlp.up_proj.weight",
+      prefix + "mlp.down_proj.weight",
+  };
+}
+
 std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
   const auto& token_ids = inputs[0];
   const auto& sin_emb = inputs[1];

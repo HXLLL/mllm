@@ -121,6 +121,11 @@ class Qwen3Text final : public nn::Module {
 
   void loadFromDisk();
 
+  [[nodiscard]] std::vector<std::string> collectLayerParamNames(int layer) const;
+
+  [[nodiscard]] H2KV& getH2KV(int layer) { return h2kv_[layer]; }
+  [[nodiscard]] KV2H& getKV2H(int layer) { return kv2h_[layer]; }
+
  private:
   [[nodiscard]] Tensor prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb);
   [[nodiscard]] Tensor decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int token_idx);
