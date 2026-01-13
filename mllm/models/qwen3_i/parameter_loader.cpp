@@ -71,6 +71,10 @@ void ParameterLoader::loadTensor(const std::string& name) {
   parameter_file_->push(name, tensor);
 }
 
+bool ParameterLoader::isLoaded(const std::string& name) const {
+  return parameter_file_->has(name);
+}
+
 ParameterFile::ptr_t ParameterLoader::getParameterFile() {
   return parameter_file_;
 }
