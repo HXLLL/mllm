@@ -20,14 +20,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 
 **Test**:
+Simple generation test:
+```bash
+./scripts/test_simple_generation.sh
+```
+
+Manual test with recovery validation:
 ```bash
 ./build/bin/mllm-qwen3-runner \
-  -m /home/xiaolong/llms/Qwen3-0.6B-w4a32kai/model.mllm \
-  -c /home/xiaolong/llms/Qwen3-0.6B-w4a32kai/config.json \
-  -t /home/xiaolong/llms/Qwen3-0.6B-w4a32kai/tokenizer.json \
-  -mv v2 --state_path ./data/qwen3-runner -cs 32
+  -m /home/xiaolong/llms/Qwen3-0.6B/model.mllm \
+  -c /home/xiaolong/llms/Qwen3-0.6B/config.json \
+  -t /home/xiaolong/llms/Qwen3-0.6B/tokenizer.json \
+  --state_path ./data/qwen3-runner -cs 32 -mdt 32
 ```
 Use Ctrl-C to simulate power loss, then rerun. Second run should skip already-completed prefill.
+
+Options:
+- `-cs N`: Chunk size (default: 32)
+- `-mdt N`: Max decode tokens, 0 for unlimited (default in script: 32)
+- `-ie`: Ignore EOS token
 
 ## Coding Style Preferences
 

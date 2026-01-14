@@ -6,7 +6,7 @@ echo 3 | sudo tee /proc/sys/vm/drop_caches
 # Default values
 CS=${CS:-32}
 MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
-MAX_DECODE_TOKENS=${MAX_DECODE_TOKENS:-0}
+MAX_DECODE_TOKENS=${MAX_DECODE_TOKENS:-32}
 IGNORE_EOS=${IGNORE_EOS:-false}
 
 # Model base directory
