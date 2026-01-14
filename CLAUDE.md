@@ -7,10 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Goal**: Make inference engine resistant to power loss. Save/recover states (KV cache, etc.) to minimize redundant work on restart.
 
 **Main files**:
-- `mllm/models/qwen3_i/` - Model with state persistence (generation_state.hpp/cpp)
+- `mllm/mllm/models/qwen3_i/` - Model with state persistence and task-based scheduler
+  - `grid_scheduler.hpp/cpp` - Task-based scheduler (see `docs/task.md` for architecture)
+  - `grid_task.hpp/cpp` - Task definitions (LoadParam, LoadKV, LoadH, Compute)
+  - `generation_state.hpp/cpp` - State persistence with watermark mechanism
+  - `modeling_qwen3_i.hpp/cpp` - Model implementation using scheduler
 - `examples/qwen3/main.cpp` - Test application
 
-**Build** (cross-compilation):
+**Build**:
 ```bash
 ./scripts/remote_build.sh
 ```

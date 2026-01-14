@@ -7,7 +7,11 @@ Guidance for coding agents operating in this repo. Defer to CLAUDE.md if conflic
 **Goal**: Make inference engine resistant to power loss. Save/recover states (KV cache, etc.) to minimize redundant work on restart.
 
 **Main files**:
-- `mllm/models/qwen3_i/` - Model with state persistence (generation_state.hpp/cpp)
+- `mllm/mllm/models/qwen3_i/` - Model with state persistence and task-based scheduler
+  - `grid_scheduler.hpp/cpp` - Task-based scheduler (see `docs/task.md` for architecture)
+  - `grid_task.hpp/cpp` - Task definitions (LoadParam, LoadKV, LoadH, Compute)
+  - `generation_state.hpp/cpp` - State persistence with watermark mechanism
+  - `modeling_qwen3_i.hpp/cpp` - Model implementation using scheduler
 - `examples/qwen3/main.cpp` - Test application
 
 ## Commands
@@ -55,7 +59,6 @@ This is an experimental/academic project, not user-facing software. Optimize for
 
 **Key Patterns**:
 - Models inherit from `nn::Module` with `forward()` method
-- Eager execution by default
 
 ### Naming Conventions
 - Namespaces: snake_case (e.g., `mllm::models::qwen3_i`)
@@ -76,12 +79,10 @@ This is an experimental/academic project, not user-facing software. Optimize for
 - Avoid empty catch blocks and defensive complexity
 
 ## State Persistence Rules
-
 - State files are deleted between tests; do not add migrations or versioning
 - Keep state format simple; minimal metadata only
 
 ## Safety & Hygiene
-
 - Do not modify vendored/third_party unless requested
 - Unless necessary, do not modify code other than examples/qwen3/ and mllm/mllm/models/qwen3_i. if you need to do so, confirm it with the user.
 - Do not commit generated build outputs or large model files
