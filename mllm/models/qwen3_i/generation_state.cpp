@@ -162,6 +162,22 @@ void GenerationState::loadLayerHCache(const CacheRange& range) {
   markLoaded(h_loaded_, range);
 }
 
+bool GenerationState::isKVLoaded(const CacheRange& range) const {
+  size_t base_idx = range.layer_idx * max_length_;
+  for (int i = 0; i < range.count; ++i) {
+    if (!k_loaded_[base_idx + range.offset + i] || !v_loaded_[base_idx + range.offset + i]) { return false; }
+  }
+  return true;
+}
+
+bool GenerationState::isHLoaded(const CacheRange& range) const {
+  size_t base_idx = range.layer_idx * max_length_;
+  for (int i = 0; i < range.count; ++i) {
+    if (!h_loaded_[base_idx + range.offset + i]) { return false; }
+  }
+  return true;
+}
+
 void GenerationState::load() {
   prepareForLayerwiseLoad();
 

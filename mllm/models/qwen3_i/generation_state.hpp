@@ -50,6 +50,10 @@ class GenerationState {
   void loadLayerVCache(const CacheRange& range);
   void loadLayerHCache(const CacheRange& range);
 
+  // Query methods for loaded state
+  [[nodiscard]] bool isKVLoaded(const CacheRange& range) const;
+  [[nodiscard]] bool isHLoaded(const CacheRange& range) const;
+
  private:
   const size_t ELEMENT_SIZE = bytesOfType(kFloat32) / lanesOfType(kFloat32);
 
