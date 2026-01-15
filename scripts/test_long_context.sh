@@ -8,6 +8,7 @@ echo 3 | sudo tee /proc/sys/vm/drop_caches
 
 # Parameters
 CONTEXT_SIZE=${1:-1k}
+DEBUG=${DEBUG:-false}
 CS=${CS:-32}
 MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
 
@@ -30,8 +31,14 @@ mkdir -p "${STATE_PATH}"
 
 rm -rf ${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}
 
+if [ "$DEBUG" = "true" ]; then
+  APP="gdb --args ./build/bin/mllm-qwen3-runner"
+else
+  APP="./build/bin/mllm-qwen3-runner"
+fi
+
 # Run
-./build/bin/mllm-qwen3-runner \
+${APP} \
   -m "${MODEL_BASE}/model.mllm" \
   -c "${MODEL_BASE}/config.json" \
   -t "${MODEL_BASE}/tokenizer.json" \

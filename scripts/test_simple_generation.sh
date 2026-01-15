@@ -3,6 +3,7 @@
 /bin/sync
 echo 3 | sudo tee /proc/sys/vm/drop_caches 
 
+DEBUG=${DEBUG:-false}
 # Default values
 CS=${CS:-32}
 MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
@@ -22,8 +23,14 @@ mkdir -p "${STATE_PATH}"
 
 rm -rf ${STATE_PATH}/qwen3-runner
 
+if [ "$DEBUG" = "true" ]; then
+  APP="gdb --args ./build/bin/mllm-qwen3-runner"
+else
+  APP="./build/bin/mllm-qwen3-runner"
+fi
+
 # Run generation with input from stdin
-echo "${PROMPT}" | ./build/bin/mllm-qwen3-runner \
+echo "${PROMPT}" | ${APP}\
   -m "${MODEL_BASE}/model.mllm" \
   -c "${MODEL_BASE}/config.json" \
   -t "${MODEL_BASE}/tokenizer.json" \
