@@ -17,7 +17,7 @@ class SimpleGridScheduler : public GridScheduler {
   [[nodiscard]] bool isDone() const override;
 
  private:
-  bool done_;
+  bool done_{};
 };
 
 }  // namespace mllm::models::qwen3_i

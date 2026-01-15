@@ -40,14 +40,14 @@ class GridTask {
   [[nodiscard]] bool isCompute() const { return taskType() == TaskType::kCompute; }
 
  protected:
-  void markCompleted() { completed_ = true; }
+  void markCompleted() { completed_ = true; MLLM_INFO("{} completed", name()); }
   GenerationState& state_;
 
  private:
   int layer_;
   int chunk_id_;
   CacheRange range_;
-  bool completed_ = false;
+  bool completed_{};
 };
 
 class LoadParamTask : public GridTask {
