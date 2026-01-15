@@ -8,7 +8,6 @@ echo 3 | sudo tee /proc/sys/vm/drop_caches
 
 # Parameters
 CONTEXT_SIZE=${1:-1k}
-DEBUG=${DEBUG:-false}
 CS=${CS:-32}
 MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
 
@@ -31,7 +30,7 @@ mkdir -p "${STATE_PATH}"
 
 rm -rf ${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}
 
-if [ "$DEBUG" = "true" ]; then
+if [ "$DEBUG" ]; then
   APP="gdb --args ./build/bin/mllm-qwen3-runner"
 else
   APP="./build/bin/mllm-qwen3-runner"
