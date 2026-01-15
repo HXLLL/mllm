@@ -24,6 +24,7 @@ class ParameterLoader {
   [[nodiscard]] bool isLoaded(const std::string& name) const;
   void loadTensor(const std::string& name);
   ParameterFile::ptr_t getParameterFile();
+  void dumpTensorStatus() const;
 
  private:
   std::string file_path_;

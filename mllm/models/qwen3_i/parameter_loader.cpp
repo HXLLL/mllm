@@ -3,6 +3,8 @@
 
 #include "mllm/models/qwen3_i/parameter_loader.hpp"
 
+#include <fmt/core.h>
+
 #include "mllm/core/ParameterFile.hpp"
 #include "mllm/core/TensorStorage.hpp"
 #include "mllm/core/TensorViewImpl.hpp"
@@ -77,6 +79,17 @@ bool ParameterLoader::isLoaded(const std::string& name) const {
 
 ParameterFile::ptr_t ParameterLoader::getParameterFile() {
   return parameter_file_;
+}
+
+void ParameterLoader::dumpTensorStatus() const {
+  fmt::print("ParameterLoader tensor status (total: {}):\n", descriptors_.size());
+  int loaded_count = 0;
+  for (const auto& [name, desc] : descriptors_) {
+    bool loaded = isLoaded(name);
+    if (loaded) loaded_count++;
+    fmt::print("  {}: {}\n", name, loaded ? "LOADED" : "NOT LOADED");
+  }
+  fmt::print("Loaded: {}/{}\n", loaded_count, descriptors_.size());
 }
 
 }  // namespace mllm
