@@ -266,13 +266,8 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
       auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
       auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
 
-      // Create tasks
-      auto load_kv = std::make_unique<LoadKVTask>(layer, chunk, range, state_);
-      auto load_h = std::make_unique<LoadHTask>(layer, chunk, range, state_);
-      auto compute = std::make_unique<ComputeTask>(layer, chunk, range, h2kv_[layer], kv2h_[layer],
-                                                   state_, sin_chunk, cos_chunk);
-
-      scheduler.setCellTasks(layer, chunk, std::move(load_kv), std::move(load_h), std::move(compute));
+      GridCell cell(range, chunk, state_, h2kv_[layer], kv2h_[layer], sin_chunk, cos_chunk);
+      scheduler.initGridCell(layer, chunk, std::move(cell));
     }
   }
 
