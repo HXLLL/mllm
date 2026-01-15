@@ -16,6 +16,13 @@ namespace mllm::models::qwen3_i {
 class H2KV;
 class KV2H;
 
+enum class TaskType {
+  kLoadParam,
+  kLoadKV,
+  kLoadH,
+  kCompute
+};
+
 class GridTask {
  public:
   GridTask(int layer, int chunk_id, const CacheRange& range, GenerationState& state) : state_(state), layer_(layer), chunk_id_(chunk_id), range_(range) {}
@@ -23,11 +30,14 @@ class GridTask {
   virtual ~GridTask() = default;
   virtual void execute() = 0;
   [[nodiscard]] virtual std::string name() const = 0;
+  [[nodiscard]] virtual TaskType taskType() const = 0;
 
   [[nodiscard]] int layer() const { return layer_; }
   [[nodiscard]] int chunkId() const { return chunk_id_; }
   [[nodiscard]] const CacheRange& range() const { return range_; }
   [[nodiscard]] bool isCompleted() const { return completed_; }
+  [[nodiscard]] bool isIO() const { return taskType() == TaskType::kLoadParam || taskType() == TaskType::kLoadKV || taskType() == TaskType::kLoadH; }
+  [[nodiscard]] bool isCompute() const { return taskType() == TaskType::kCompute; }
 
  protected:
   void markCompleted() { completed_ = true; }
@@ -46,6 +56,7 @@ class LoadParamTask : public GridTask {
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kLoadParam; }
 
  private:
   ParameterLoader& loader_;
@@ -59,6 +70,7 @@ class LoadKVTask : public GridTask {
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kLoadKV; }
 };
 
 // Load hidden state from checkpoint
@@ -68,6 +80,7 @@ class LoadHTask : public GridTask {
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kLoadH; }
 };
 
 // Compute: H2KV + KV2H
@@ -78,6 +91,7 @@ class ComputeTask : public GridTask {
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kCompute; }
 
  private:
   H2KV& h2kv_;
