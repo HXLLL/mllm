@@ -100,4 +100,14 @@ class ComputeTask : public GridTask {
   Tensor cos_emb_;
 };
 
+struct GridCell {
+  LoadKVTask load_kv;
+  LoadHTask load_h;
+  ComputeTask compute;
+  CacheRange range;
+
+  GridCell(const CacheRange& range, int chunk, GenerationState& state, H2KV& h2kv, KV2H& kv2h, const Tensor& sin_emb,
+           const Tensor& cos_emb);
+};
+
 }  // namespace mllm::models::qwen3_i

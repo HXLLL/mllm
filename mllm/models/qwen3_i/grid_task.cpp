@@ -85,4 +85,9 @@ void ComputeTask::execute() {
 
 std::string ComputeTask::name() const { return "Compute[" + std::to_string(layer()) + "][" + std::to_string(chunkId()) + "]"; }
 
+GridCell::GridCell(const CacheRange& range, int chunk, GenerationState& state, H2KV& h2kv, KV2H& kv2h, const Tensor& sin_emb, const Tensor& cos_emb)
+    : load_kv(range.layer_idx, chunk, range, state),
+      load_h(range.layer_idx, chunk, range, state),
+      compute(range.layer_idx, chunk, range, h2kv, kv2h, state, sin_emb, cos_emb) {}
+
 }  // namespace mllm::models::qwen3_i
