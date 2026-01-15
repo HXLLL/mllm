@@ -53,6 +53,7 @@ class GenerationState {
   // Query methods for loaded state
   [[nodiscard]] bool isKVLoaded(const CacheRange& range) const;
   [[nodiscard]] bool isHLoaded(const CacheRange& range) const;
+  [[nodiscard]] bool isParamLoaded(int layer) const { return param_loaded_[layer]; }
 
  private:
   const size_t ELEMENT_SIZE = bytesOfType(kFloat32) / lanesOfType(kFloat32);
@@ -106,6 +107,7 @@ class GenerationState {
   std::vector<uint8_t> k_loaded_;  // [layer_nums_ * max_length_]
   std::vector<uint8_t> v_loaded_;  // [layer_nums_ * max_length_]
   std::vector<uint8_t> h_loaded_;  // [(layer_nums_ + 1) * max_length_]
+  std::vector<uint8_t> param_loaded_;  // [layer_nums_]
 };
 
 }  // namespace mllm::models::qwen3_i
