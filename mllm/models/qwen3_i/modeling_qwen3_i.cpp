@@ -6,6 +6,7 @@
 #include "mllm/models/qwen3_i/grid_scheduler.hpp"
 #include "mllm/models/qwen3_i/grid_task.hpp"
 #include "mllm/models/qwen3_i/qwen3_events.hpp"
+#include "mllm/models/qwen3_i/simple_grid_scheduler.hpp"
 #include "mllm/nn/Functional.hpp"
 #include "mllm/nn/Module.hpp"
 #include "mllm/utils/AnyValue.hpp"
@@ -231,7 +232,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   auto num_chunks = static_cast<int>((seq_len + chunk_size_ - 1) / chunk_size_);
 
   state_.prepareForLayerwiseLoad();
-  GridScheduler scheduler(num_layers_, num_chunks, state_, parameter_loader_);
+  auto scheduler = std::make_unique<SimpleGridScheduler>(num_layers_, num_chunks, state_, parameter_loader_);
 
   // 1. Handle embedding for all chunks (outside grid)
   for (int chunk = 0; chunk < num_chunks; ++chunk) {
@@ -250,8 +251,8 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   // 2. Set per-layer parameter loading tasks
   for (int layer = 0; layer < num_layers_; ++layer) {
     auto param_names = collectLayerParamNames(layer);
-    auto load_param = std::make_unique<LoadParamTask>(layer, parameter_loader_, param_names, state_);
-    scheduler.setLayerParamTask(layer, std::move(load_param));
+    LoadParamTask load_param(layer, parameter_loader_, param_names, state_);
+    scheduler->initLayerParamTask(layer, std::move(load_param));
   }
 
   // 3. Set per-cell tasks
@@ -267,12 +268,12 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
       auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
 
       GridCell cell(range, chunk, state_, h2kv_[layer], kv2h_[layer], sin_chunk, cos_chunk);
-      scheduler.initGridCell(layer, chunk, std::move(cell));
+      scheduler->initGridCell(layer, chunk, std::move(cell));
     }
   }
 
   // 4. Execute all tasks
-  scheduler.run();
+  scheduler->run();
 
   return norm_(state_.getH({num_layers_, 0, seq_len}));
 }
