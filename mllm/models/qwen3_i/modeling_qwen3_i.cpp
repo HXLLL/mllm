@@ -3,6 +3,8 @@
 
 #include "mllm/models/qwen3_i/modeling_qwen3_i.hpp"
 #include "mllm/models/qwen3_i/generation_state.hpp"
+#include "mllm/models/qwen3_i/grid_scheduler.hpp"
+#include "mllm/models/qwen3_i/grid_task.hpp"
 #include "mllm/models/qwen3_i/qwen3_events.hpp"
 #include "mllm/nn/Functional.hpp"
 #include "mllm/nn/Module.hpp"
@@ -226,51 +228,58 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 
 Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb) {
   auto seq_len = token_ids.shape()[1];
-  auto num_chunks = (seq_len + chunk_size_ - 1) / chunk_size_;
-  std::vector<Tensor> chunk_outputs;
-  chunk_outputs.reserve(num_chunks);
+  auto num_chunks = static_cast<int>((seq_len + chunk_size_ - 1) / chunk_size_);
 
-  for (int i = 0; i < num_chunks; ++i) {
-    int chunk_start = i * chunk_size_;
+  state_.prepareForLayerwiseLoad();
+  GridScheduler scheduler(num_layers_, num_chunks, state_, parameter_loader_);
+
+  // 1. Handle embedding for all chunks (outside grid)
+  for (int chunk = 0; chunk < num_chunks; ++chunk) {
+    int chunk_start = chunk * chunk_size_;
     int chunk_end = std::min(chunk_start + chunk_size_, seq_len);
     int len = chunk_end - chunk_start;
 
-    int start_layer = state_.getMinWatermark(chunk_start, len);
-
-    auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
-    auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
-
-    Tensor x;
-    if (start_layer < 0) {
-      x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
+    int watermark = state_.getMinWatermark(chunk_start, len);
+    if (watermark < 0) {
+      // No checkpoint, compute embedding
+      auto x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
       state_.updateH({0, chunk_start, len}, x);
-      start_layer = 0;
-    }
-
-    x = state_.getH({start_layer, chunk_start, len});
-    for (size_t j = start_layer; j < num_layers_; ++j) {
-      recordEvent<LayerBeginEvent>(j, len, chunk_start);
-      auto h2kv_result = h2kv_[j](x, sin_chunk, cos_chunk);
-      auto& h = h2kv_result[0];
-      auto& q = h2kv_result[1];
-      auto& k = h2kv_result[2];
-      auto& v = h2kv_result[3];
-      state_.updateKV({static_cast<int>(j), chunk_start, len}, k, v);
-      x = kv2h_[j](h, q, k, AnyValue(chunk_start))[0];
-      recordEvent<LayerCompleteEvent>(j, len, chunk_start);
-      state_.updateH({static_cast<int>(j + 1), chunk_start, len}, x);
-      state_.checkpoint();
-    }
-
-    state_.checkpoint();
-    chunk_outputs.push_back(norm_(x));
-
-    if ((i + 1) % std::max(1, num_chunks / 10) == 0 || i == num_chunks - 1) {
-      fmt::print("prefill {}/{}\n", i + 1, num_chunks);
     }
   }
 
-  return nn::functional::concat(chunk_outputs, 1);
+  // 2. Set per-layer parameter loading tasks
+  for (int layer = 0; layer < num_layers_; ++layer) {
+    auto param_names = collectLayerParamNames(layer);
+    auto load_param = std::make_unique<LoadParamTask>(layer, parameter_loader_, param_names, state_);
+    scheduler.setLayerParamTask(layer, std::move(load_param));
+  }
+
+  // 3. Set per-cell tasks
+  for (int layer = 0; layer < num_layers_; ++layer) {
+    for (int chunk = 0; chunk < num_chunks; ++chunk) {
+      int chunk_start = chunk * chunk_size_;
+      int chunk_end = std::min(chunk_start + chunk_size_, seq_len);
+      int count = chunk_end - chunk_start;
+      CacheRange range{layer, chunk_start, count};
+
+      // Extract sin/cos embeddings for this chunk
+      auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
+      auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
+
+      // Create tasks
+      auto load_kv = std::make_unique<LoadKVTask>(layer, chunk, range, state_);
+      auto load_h = std::make_unique<LoadHTask>(layer, chunk, range, state_);
+      auto compute = std::make_unique<ComputeTask>(layer, chunk, range, h2kv_[layer], kv2h_[layer],
+                                                   state_, sin_chunk, cos_chunk);
+
+      scheduler.setCellTasks(layer, chunk, std::move(load_kv), std::move(load_h), std::move(compute));
+    }
+  }
+
+  // 4. Execute all tasks
+  scheduler.run();
+
+  return norm_(state_.getH({num_layers_, 0, seq_len}));
 }
 
 Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int token_idx) {
