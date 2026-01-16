@@ -77,8 +77,10 @@ class H2KV : public Task {
  public:
   explicit H2KV(Qwen3Decoder& decoder, GenerationState& state);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
+  void load(const ParameterFile::ptr_t& param_file) override;
 
  private:
+  bool pulled{};
   int layer_idx_;
   int hidden_size_;
   int head_dim_;
@@ -100,8 +102,10 @@ class KV2H : public Task {
  public:
   explicit KV2H(Qwen3Decoder& decoder, GenerationState& state);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
+  void load(const ParameterFile::ptr_t& param_file) override;
 
  private:
+  bool pulled{};
   int layer_idx_;
   int head_dim_;
   int num_attention_heads_;

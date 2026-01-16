@@ -110,6 +110,17 @@ H2KV::H2KV(Qwen3Decoder& decoder, GenerationState& state)
       k_rope_(decoder.k_rope_),
       state_(state) {}
 
+void H2KV::load(const ParameterFile::ptr_t &param_file) {
+  input_layer_norm_.impl()->load(param_file);
+  q_proj_.impl()->load(param_file);
+  k_proj_.impl()->load(param_file);
+  v_proj_.impl()->load(param_file);
+  rms_norm_q_.impl()->load(param_file);
+  rms_norm_k_.impl()->load(param_file);
+  q_rope_.impl()->load(param_file);
+  k_rope_.impl()->load(param_file);
+}
+
 std::vector<Tensor> H2KV::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
   const auto& hidden_states = inputs[0];
   const auto& sin_emb = inputs[1];
@@ -147,6 +158,14 @@ KV2H::KV2H(Qwen3Decoder& decoder, GenerationState& state)
       mlp_(decoder.mlp_),
       post_attention_layer_norm_(decoder.post_attention_layer_norm_),
       state_(state) {}
+
+void KV2H::load(const ParameterFile::ptr_t &param_file) {
+  o_proj_.impl()->load(param_file);
+  mask_.impl()->load(param_file);
+  softmax_.impl()->load(param_file);
+  mlp_.load(param_file);
+  post_attention_layer_norm_.impl()->load(param_file);
+}
 
 std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
   const auto& hidden_states = inputs[0];
