@@ -157,7 +157,7 @@ class Module {
     return __main(tensors, others);
   }
 
-  void load(const ParameterFile::ptr_t& param_file);
+  virtual void load(const ParameterFile::ptr_t& param_file);
 
   virtual std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args);
 
