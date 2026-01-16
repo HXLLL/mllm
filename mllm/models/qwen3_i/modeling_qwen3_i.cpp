@@ -3,7 +3,6 @@
 
 #include "mllm/models/qwen3_i/modeling_qwen3_i.hpp"
 #include "mllm/models/qwen3_i/generation_state.hpp"
-#include "mllm/models/qwen3_i/grid_scheduler.hpp"
 #include "mllm/models/qwen3_i/grid_task.hpp"
 #include "mllm/models/qwen3_i/qwen3_events.hpp"
 #include "mllm/models/qwen3_i/simple_grid_scheduler.hpp"
@@ -198,7 +197,7 @@ void Qwen3Text::loadFromDisk() {
   parameter_loader_.loadTensor(prefix + "embed_tokens.weight");
   parameter_loader_.loadTensor(prefix + "norm.weight");
 
-  for (auto& block : decode_blocks_.list()) { block.loadFromDisk(); }
+  // for (auto& block : decode_blocks_.list()) { block.loadFromDisk(); }
 }
 
 std::vector<std::string> Qwen3Text::collectLayerParamNames(int layer) const {
@@ -325,7 +324,6 @@ void Qwen3IntermittentForCausalLM::loadFromDisk() {
   // Load embedding, norm, and lm_head at startup (layers are loaded on-demand)
   llm_.loadFromDisk();
   if (tie_word_embeddings_) { parameter_loader_.loadTensor("lm_head_out.weight"); }
-  // 顶层调用 load()，递归加载 embedding/norm/lm_head 到 ops
   load(parameter_loader_.getParameterFile());
 }
 
