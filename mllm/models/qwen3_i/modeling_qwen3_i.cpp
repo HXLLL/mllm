@@ -224,11 +224,11 @@ Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg, Generation
 
 void Qwen3Text::loadFromDisk() {
   auto prefix = getModuleName() + ".";
-  // Load embedding and norm (layers are loaded on-demand)
   parameter_loader_.loadTensor(prefix + "embed_tokens.weight");
   parameter_loader_.loadTensor(prefix + "norm.weight");
-
-  // for (auto& block : decode_blocks_.list()) { block.loadFromDisk(); }
+  norm_.impl()->load(parameter_loader_.getParameterFile());
+  embedding_.impl()->load(parameter_loader_.getParameterFile());
+  // each layer's parameters are loaded on-demand
 }
 
 std::vector<std::string> Qwen3Text::collectLayerParamNames(int layer) const {
@@ -351,11 +351,13 @@ Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cf
   registerBuffer("inv_freq", makeRoPEInvFreq(cfg_.head_dim, cfg_.rope_theta));
 }
 
-void Qwen3IntermittentForCausalLM::loadFromDisk() {
+void Qwen3IntermittentForCausalLM::loadMiscParams() {
   // Load embedding, norm, and lm_head at startup (layers are loaded on-demand)
   llm_.loadFromDisk();
-  if (tie_word_embeddings_) { parameter_loader_.loadTensor("lm_head_out.weight"); }
-  load(parameter_loader_.getParameterFile());
+  if (tie_word_embeddings_) {
+    parameter_loader_.loadTensor("lm_head_out.weight"); 
+    lm_head_.impl()->load(parameter_loader_.getParameterFile());
+  }
 }
 
 ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationOutputPast& input,
@@ -372,7 +374,7 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
     auto last_pos = *position_ids.cptrAt<int64_t>({0, position_ids.shape()[1] - 1});
     position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
     *position_ids.ptrAt<int64_t>({0, 0}) = last_pos + 1;
-    state_.start_decode(sequence);
+    state_.startDecode(sequence);
   } else {  // prefill phase
     position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
     for (int s = 0; s < seq_len; ++s) { *position_ids.ptrAt<int64_t>({0, s}) = s; }

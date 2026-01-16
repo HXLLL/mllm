@@ -156,7 +156,7 @@ class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {
   void streamGenerate(const ARGenerationOutputPast& input, const ARGenerationArgs& args,
                       const std::function<void(int64_t)>& callback) override;
 
-  void loadFromDisk();
+  void loadMiscParams();
 
  private:
   ParameterLoader& parameter_loader_;

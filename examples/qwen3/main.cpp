@@ -49,6 +49,7 @@ class Qwen3Service {
     int32_t chunk_size;
     int32_t max_decode_tokens;
     bool ignore_eos;
+    bool lazy_load;
   };
 
   explicit Qwen3Service(Config&& config)
@@ -60,7 +61,7 @@ class Qwen3Service {
   void load() {
     if (std::filesystem::exists(config_.state_path)) {
       mllm::Timer load_state_timer;
-      state_.load();
+      state_.preLoad();
       fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
     } else {
       state_.create();
@@ -71,7 +72,7 @@ class Qwen3Service {
     mllm::Timer load_model_timer;
     parameter_loader_ = std::make_unique<ParameterLoader>(config_.model_path);
     model_ = std::make_unique<Model>(qwen3_cfg_, state_, *parameter_loader_, config_.chunk_size);
-    model_->loadFromDisk();
+    model_->loadMiscParams();
     mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadCompleteEvent>();
     fmt::print("Model loaded in {}ms\n", load_model_timer.elapsed_ms());
   }
@@ -157,6 +158,7 @@ MLLM_MAIN({
       Argparse::add<int32_t>("-mdt|--max_decode_tokens").help("Maximum decode tokens (0=no limit)").def(0);
   auto& ignore_eos = Argparse::add<bool>("-ie|--ignore_eos").help("Ignore EOS token").def(false);
   auto& trace_file = Argparse::add<std::string>("-tf|--trace_file").help("Trace file path to dump trace data");
+  auto& lazy_load = Argparse::add<bool>("-ll|--lazy_load").help("Lazy load (default: false)");
   Argparse::parse(argc, argv);
 
   if (help.isSet()) {
