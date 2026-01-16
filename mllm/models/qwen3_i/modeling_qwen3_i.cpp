@@ -48,7 +48,6 @@ std::vector<Tensor> Qwen3MLP::forward(const std::vector<Tensor>& inputs, const s
 Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, GenerationState& state,
                            ParameterLoader& parameter_loader, int idx)
     : nn::Module(name),
-      parameter_loader_(parameter_loader),
       layer_idx_(idx),
       hidden_size_(cfg.hidden_size),
       head_dim_(cfg.head_dim),
@@ -71,7 +70,8 @@ Qwen3Decoder::Qwen3Decoder(const std::string& name, const Qwen3Config& cfg, Gene
       mlp_(reg<Qwen3MLP>("mlp", cfg, parameter_loader)),
       input_layer_norm_(reg<nn::RMSNorm>("input_layernorm", cfg.rms_norm_eps)),
       post_attention_layer_norm_(reg<nn::RMSNorm>("post_attention_layernorm", cfg.rms_norm_eps)),
-      state_(state) {}
+      state_(state),
+      parameter_loader_(parameter_loader) {}
 
 void Qwen3Decoder::loadFromDisk() {
   auto prefix = getModuleName() + ".";
@@ -108,7 +108,8 @@ H2KV::H2KV(Qwen3Decoder& decoder, GenerationState& state)
       rms_norm_k_(decoder.rms_norm_k_),
       q_rope_(decoder.q_rope_),
       k_rope_(decoder.k_rope_),
-      state_(state) {}
+      state_(state),
+      parameter_loader_(decoder.parameter_loader_) {}
 
 void H2KV::load(const ParameterFile::ptr_t &param_file) {
   input_layer_norm_.impl()->load(param_file);
@@ -119,6 +120,7 @@ void H2KV::load(const ParameterFile::ptr_t &param_file) {
   rms_norm_k_.impl()->load(param_file);
   q_rope_.impl()->load(param_file);
   k_rope_.impl()->load(param_file);
+  pulled_ = true;
 }
 
 std::vector<Tensor> H2KV::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
@@ -127,6 +129,10 @@ std::vector<Tensor> H2KV::forward(const std::vector<Tensor>& inputs, const std::
   const auto& cos_emb = inputs[2];
   assert(hidden_states.shape()[0] == 1);
   const int count = hidden_states.shape()[1];
+
+  if (!pulled_) {
+    load(parameter_loader_.getParameterFile());
+  }
 
   // Apply input layer norm
   auto x = input_layer_norm_(hidden_states);
@@ -157,7 +163,8 @@ KV2H::KV2H(Qwen3Decoder& decoder, GenerationState& state)
       softmax_(decoder.softmax_),
       mlp_(decoder.mlp_),
       post_attention_layer_norm_(decoder.post_attention_layer_norm_),
-      state_(state) {}
+      state_(state),
+      parameter_loader_(decoder.parameter_loader_) {}
 
 void KV2H::load(const ParameterFile::ptr_t &param_file) {
   o_proj_.impl()->load(param_file);
@@ -165,6 +172,7 @@ void KV2H::load(const ParameterFile::ptr_t &param_file) {
   softmax_.impl()->load(param_file);
   mlp_.load(param_file);
   post_attention_layer_norm_.impl()->load(param_file);
+  pulled_ = true;
 }
 
 std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
@@ -173,6 +181,10 @@ std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::
   const auto& key = inputs[2];
   int offset = args[0].get<int>();
   const int count = hidden_states.shape()[1];
+
+  if (!pulled_) {
+    load(parameter_loader_.getParameterFile());
+  }
 
   auto [cached_key, cached_value] = state_.getKV({layer_idx_, 0, offset + count});
   MLLM_RT_ASSERT(cached_key.dtype() == kFloat32);

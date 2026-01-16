@@ -23,11 +23,11 @@ class Qwen3MLP final : public nn::Module {
   void loadFromDisk();
 
  private:
-  ParameterLoader &parameter_loader_;
   nn::Linear gate_proj_;
   nn::Linear up_proj_;
   nn::Linear down_proj_;
   nn::SiLU silu_;
+  ParameterLoader &parameter_loader_;
 };
 
 class Qwen3Decoder final : public nn::Module {
@@ -41,7 +41,6 @@ class Qwen3Decoder final : public nn::Module {
   friend class KV2H;
 
  private:
-  ParameterLoader& parameter_loader_;
   int layer_idx_;
   int hidden_size_;
   int head_dim_;
@@ -65,6 +64,7 @@ class Qwen3Decoder final : public nn::Module {
   nn::RMSNorm input_layer_norm_;
   nn::RMSNorm post_attention_layer_norm_;
   GenerationState& state_;
+  ParameterLoader& parameter_loader_;
 };
 
 class Task : public nn::Module {
@@ -80,7 +80,7 @@ class H2KV : public Task {
   void load(const ParameterFile::ptr_t& param_file) override;
 
  private:
-  bool pulled{};
+  bool pulled_{};
   int layer_idx_;
   int hidden_size_;
   int head_dim_;
@@ -96,6 +96,7 @@ class H2KV : public Task {
   nn::RoPE& q_rope_;
   nn::RoPE& k_rope_;
   GenerationState& state_;
+  ParameterLoader &parameter_loader_;
 };
 
 class KV2H : public Task {
@@ -105,7 +106,7 @@ class KV2H : public Task {
   void load(const ParameterFile::ptr_t& param_file) override;
 
  private:
-  bool pulled{};
+  bool pulled_{};
   int layer_idx_;
   int head_dim_;
   int num_attention_heads_;
@@ -116,6 +117,7 @@ class KV2H : public Task {
   Qwen3MLP& mlp_;
   nn::RMSNorm& post_attention_layer_norm_;
   GenerationState& state_;
+  ParameterLoader &parameter_loader_;
 };
 
 class Qwen3Text final : public nn::Module {
