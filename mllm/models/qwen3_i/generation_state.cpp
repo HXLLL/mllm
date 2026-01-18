@@ -14,10 +14,11 @@ namespace fs = std::filesystem;
 GenerationState::GenerationState(const fs::path& path) : path_(path) {}
 
 void GenerationState::create(const Qwen3Config& cfg) {
+  initMetadata(cfg);
+
   createFiles();
   openFiles();
 
-  initMetadata(cfg);
   initWatermark();
   initLoadedState();
   initCaches();
