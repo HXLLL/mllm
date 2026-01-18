@@ -11,7 +11,8 @@ namespace mllm::models::qwen3_i {
 
 namespace fs = std::filesystem;
 
-GenerationState::GenerationState(const fs::path& path) : path_(path) {}
+GenerationState::GenerationState(const fs::path& path)
+    : path_(path) {}
 
 void GenerationState::create(const Qwen3Config& cfg) {
   initMetadata(cfg);
