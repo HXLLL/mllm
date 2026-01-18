@@ -16,7 +16,7 @@ class FileDescriptor {
  public:
   FileDescriptor() : fd_(-1) {}
   explicit FileDescriptor(const fs::path& path) : path_(path) {
-    fd_ = open(path.c_str(), O_RDWR);
+    fd_ = open(path.c_str(), O_RDWR | O_CREAT);
     if (fd_ < 0) {
       MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {}, errno: {} ({})", path.string(),
                       errno, strerror(errno));
