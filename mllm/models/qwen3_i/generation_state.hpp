@@ -27,6 +27,7 @@ class GenerationState {
   using Qwen3Config = models::qwen3::Qwen3Config;
 
   explicit GenerationState(const std::filesystem::path& path);
+  ~GenerationState() = default;
 
   /* init */
   void create(const Qwen3Config& cfg);

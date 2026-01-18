@@ -11,39 +11,22 @@
 #include "mllm/utils/Common.hpp"
 #include "mllm/utils/Log.hpp"
 
-namespace mllm {
+namespace mllm::models::qwen3_i {
 
 ParameterLoader::ParameterLoader(const std::string& file_path)
-    : file_path_(file_path), parameter_file_(ParameterFile::create(ModelFileVersion::kV2)) {
-  file_.open(file_path, std::ios::binary);
-  if (!file_.is_open()) {
-    MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open parameter file: {}", file_path);
-  }
+    : file_path_(file_path),
+      file_(file_path),
+      parameter_file_(ParameterFile::create(ModelFileVersion::kV2)) {}
 
-  // Read header
-  ModelFileV2Descriptor header;
-  file_.read(reinterpret_cast<char*>(&header), sizeof(ModelFileV2Descriptor));
-
-  MLLM_RT_ASSERT_EQ(MLLM_MODEL_FILE_V2_MAGIC_NUMBER, header.magic_number);
-  MLLM_RT_ASSERT_EQ(MLLM_MODEL_FILE_V2_VERSION, header.version);
-
-  // Read all descriptors
-  std::vector<ModelFileV2ParamsDescriptor> param_descriptors(header.num_params);
-  file_.seekg(header.params_desc_offset);
-  file_.read(reinterpret_cast<char*>(param_descriptors.data()),
-                 header.num_params * sizeof(ModelFileV2ParamsDescriptor));
-
-  // Build name -> descriptor map
-  for (const auto& desc : param_descriptors) {
-    std::string name(desc._param_name_view());
-    descriptors_[name] = desc;
+void ParameterLoader::load() {
+  loadHeader();
+  for (const auto& [name, desc] : descriptors_) {
+    loadTensor(name);
   }
 }
 
-ParameterLoader::~ParameterLoader() {
-  if (file_.is_open()) {
-    file_.close();
-  }
+void ParameterLoader::lazyLoad() {
+  loadHeader();
 }
 
 void ParameterLoader::loadTensor(const std::string& name) {
@@ -65,31 +48,41 @@ void ParameterLoader::loadTensor(const std::string& name) {
   auto t = TensorViewImpl::create(shape, s);
   s->name_ = name;
   auto tensor = Tensor(t).alloc();
-
-  file_.seekg(desc.parameter_offset);
-  file_.read(static_cast<char*>(s->ptr_), desc.parameter_size);
+  file_.pread(s->ptr_, desc.parameter_size, desc.parameter_offset);
   s->mem_type_ = kParamsNormal;
 
   parameter_file_->push(name, tensor);
 }
 
-bool ParameterLoader::isLoaded(const std::string& name) const {
-  return parameter_file_->has(name);
-}
-
-ParameterFile::ptr_t ParameterLoader::getParameterFile() {
-  return parameter_file_;
-}
-
 void ParameterLoader::dumpTensorStatus() const {
-  fmt::print("ParameterLoader tensor status (total: {}):\n", descriptors_.size());
+  fmt::print("ParameterLoader tensor status (total: {}):\n", header_.num_params);
   int loaded_count = 0;
   for (const auto& [name, desc] : descriptors_) {
-    bool loaded = isLoaded(name);
+    bool loaded = parameter_file_->has(name);
     if (loaded) loaded_count++;
     fmt::print("  {}: {}\n", name, loaded ? "LOADED" : "NOT LOADED");
   }
-  fmt::print("Loaded: {}/{}\n", loaded_count, descriptors_.size());
+  fmt::print("Loaded: {}/{}\n", loaded_count, header_.num_params);
 }
 
-}  // namespace mllm
+
+void ParameterLoader::loadHeader() {
+  ModelFileV2Descriptor header;
+  file_.read(reinterpret_cast<char*>(&header), sizeof(ModelFileV2Descriptor));
+
+  MLLM_RT_ASSERT_EQ(MLLM_MODEL_FILE_V2_MAGIC_NUMBER, header.magic_number);
+  MLLM_RT_ASSERT_EQ(MLLM_MODEL_FILE_V2_VERSION, header.version);
+
+  // Read all descriptors
+  std::vector<ModelFileV2ParamsDescriptor> param_descriptors(header.num_params);
+  size_t param_descriptors_size = header.num_params * sizeof(ModelFileV2ParamsDescriptor);
+  file_.pread(param_descriptors.data(), param_descriptors_size, header.params_desc_offset);
+
+  // Build name -> descriptor map
+  for (const auto& desc : param_descriptors) {
+    std::string name(desc._param_name_view());
+    descriptors_[name] = desc;
+  }
+}
+
+}  // namespace mllm::models::qwen3_i
