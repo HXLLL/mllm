@@ -38,7 +38,7 @@ class Qwen3Service {
  public:
   using Model = mllm::models::qwen3_i::Qwen3IntermittentForCausalLM;
   using GenerationState = mllm::models::qwen3_i::GenerationState;
-  using ParameterLoader = mllm::ParameterLoader;
+  using ParameterLoader = mllm::models::qwen3_i::ParameterLoader;
 
   struct Config {
     std::filesystem::path model_path;
@@ -56,13 +56,21 @@ class Qwen3Service {
       : config_(config),
         qwen3_cfg_(config.config_path),
         qwen3_tokenizer_(config.tokenizer_path),
-        state_(config.state_path) {}
+        parameter_loader_(config.model_path),
+        state_(config.state_path),
+        model_(qwen3_cfg_, state_, parameter_loader_, config.chunk_size) {}
 
   void load() {
     if (std::filesystem::exists(config_.state_path)) {
-      mllm::Timer load_state_timer;
-      state_.load();
-      fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
+      if (config_.lazy_load) {
+        state_.lazyLoad();
+        parameter_loader_.lazyLoad();
+      } else {
+        mllm::Timer load_state_timer;
+        state_.load();
+        parameter_loader_.load();
+        fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
+      }
     } else {
       state_.create(qwen3_cfg_);
       fmt::print("Generation state created\n");
@@ -70,9 +78,7 @@ class Qwen3Service {
 
     mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadBeginEvent>();
     mllm::Timer load_model_timer;
-    parameter_loader_ = std::make_unique<ParameterLoader>(config_.model_path);
-    model_ = std::make_unique<Model>(qwen3_cfg_, state_, *parameter_loader_, config_.chunk_size);
-    model_->loadMiscParams();
+    model_.loadMiscParams();
     mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadCompleteEvent>();
     fmt::print("Model loaded in {}ms\n", load_model_timer.elapsed_ms());
   }
@@ -91,20 +97,16 @@ class Qwen3Service {
     } else {
       std::string prompt_text = getPrompt();
       inputs = qwen3_tokenizer_.convertMessage({.prompt = prompt_text});
-      state_.start(inputs["sequence"]);
+      state_.startPrefill(inputs["sequence"]);
     }
 
-    mllm::models::ARGenerationArgs gen_args;
-    gen_args["max_decode_tokens"] = mllm::AnyValue(config_.max_decode_tokens);
-    gen_args["ignore_eos"] = mllm::AnyValue(config_.ignore_eos);
-
-    model_->streamGenerate(inputs, gen_args,
-                           [&](int64_t token_id) { std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush; });
+    model_.streamGenerate(inputs, makeGenArgs(), [&](int64_t token_id) {
+      std::wcout << qwen3_tokenizer_.detokenize(token_id) << std::flush;
+    });
     state_.checkpoint();
 
     fmt::print("\n{}\n", std::string(60, '-'));
-
-    model_->perfSummary();
+    model_.perfSummary();
   }
 
  private:
@@ -138,12 +140,19 @@ class Qwen3Service {
     }
   };
 
+  mllm::models::ARGenerationArgs makeGenArgs() {
+    return {
+      {"max_decode_tokens", mllm::AnyValue(config_.max_decode_tokens)},
+      {"ignore_eos", mllm::AnyValue(config_.ignore_eos)},
+    };
+  }
+
   Config config_;
   mllm::models::qwen3::Qwen3Config qwen3_cfg_;
   mllm::models::qwen3::Qwen3Tokenizer qwen3_tokenizer_;
-  std::unique_ptr<ParameterLoader> parameter_loader_;
-  std::unique_ptr<Model> model_;
+  ParameterLoader parameter_loader_;
   GenerationState state_;
+  Model model_;
 };
 
 MLLM_MAIN({
