@@ -38,7 +38,8 @@ else
 fi
 
 # Run
-${APP} \
+CMD=
+CMD="${APP} \
   -m "${MODEL_BASE}/model.mllm" \
   -c "${MODEL_BASE}/config.json" \
   -t "${MODEL_BASE}/tokenizer.json" \
@@ -46,4 +47,7 @@ ${APP} \
   --state_path "${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}" \
   -cs "${CS}" \
   -tf "${TRACE_FOLDER}/${CONTEXT_SIZE}.csv" \
-  $([ "$LAZY_LOAD" = "true" ] && echo "-ll")
+  $([ "$LAZY_LOAD" = "true" ] && echo "-ll")"
+
+echo "${CMD}"
+${CMD}
