@@ -8,6 +8,7 @@ CS=${CS:-32}
 MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
 MAX_DECODE_TOKENS=${MAX_DECODE_TOKENS:-32}
 IGNORE_EOS=${IGNORE_EOS:-false}
+LAZY_LOAD=${LAZY_LOAD:-true}
 
 # Model base directory
 MODEL_BASE="/home/xiaolong/llms/${MODEL_TYPE}"
@@ -37,4 +38,5 @@ echo "${PROMPT}" | ${APP}\
   -cs "${CS}" \
   -tf "${TRACE_FOLDER}/1.csv" \
   -mdt "${MAX_DECODE_TOKENS}" \
-  $([ "$IGNORE_EOS" = "true" ] && echo "-ie")
+  $([ "$IGNORE_EOS" = "true" ] && echo "-ie") \
+  $([ "$LAZY_LOAD" = "true" ] && echo "-ll")

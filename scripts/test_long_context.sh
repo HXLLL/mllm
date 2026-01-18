@@ -10,6 +10,7 @@ echo 3 | sudo tee /proc/sys/vm/drop_caches
 CONTEXT_SIZE=${1:-1k}
 CS=${CS:-32}
 MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
+LAZY_LOAD=${LAZY_LOAD:-true}
 
 # Paths
 MODEL_BASE="/home/xiaolong/llms/${MODEL_TYPE}"
@@ -44,4 +45,5 @@ ${APP} \
   -i "${PROMPT_FILE}" \
   --state_path "${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}" \
   -cs "${CS}" \
-  -tf "${TRACE_FOLDER}/${CONTEXT_SIZE}.csv"
+  -tf "${TRACE_FOLDER}/${CONTEXT_SIZE}.csv" \
+  $([ "$LAZY_LOAD" = "true" ] && echo "-ll")
