@@ -56,15 +56,15 @@ class Qwen3Service {
       : config_(config),
         qwen3_cfg_(config.config_path),
         qwen3_tokenizer_(config.tokenizer_path),
-        state_(qwen3_cfg_, config.state_path) {}
+        state_(config.state_path) {}
 
   void load() {
     if (std::filesystem::exists(config_.state_path)) {
       mllm::Timer load_state_timer;
-      state_.preLoad();
+      state_.load();
       fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
     } else {
-      state_.create();
+      state_.create(qwen3_cfg_);
       fmt::print("Generation state created\n");
     }
 

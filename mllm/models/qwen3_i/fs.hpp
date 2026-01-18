@@ -1,5 +1,6 @@
+#pragma once
+
 #include <filesystem>
-#include <fstream>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -12,22 +13,47 @@ namespace fs = std::filesystem;
 
 class FileDescriptor {
  public:
-  explicit FileDescriptor(const fs::path& path) : path_(path) {}
+  FileDescriptor() : fd_(-1) {}
+  explicit FileDescriptor(const fs::path& path) : path_(path) {
+    fd_ = open(path.c_str(), O_RDWR);
+    if (fd_ < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {}", path.string()); }
+  }
+
   ~FileDescriptor() { close(fd_); }
+
+  size_t read(void* buffer, size_t count) {
+    int ret = ::read(fd_, buffer, count); 
+    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to read from file {}", path_.string()); }
+    return ret;
+  }
+   size_t write(const void* buffer, size_t count) { 
+    int ret = ::write(fd_, buffer, count); 
+    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to write to file {}", path_.string()); }
+    return ret;
+  }
+  size_t pread(void* buffer, size_t count, off_t offset) {
+    int ret = ::pread(fd_, buffer, count, offset);
+    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to read from file {}", path_.string()); }
+    return ret;
+  }
+  size_t pwrite(const void* buffer, size_t count, off_t offset) {
+    int ret = ::pwrite(fd_, buffer, count, offset);
+    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to write to file {}", path_.string()); }
+    return ret;
+  }
+  void fsync() { 
+    ::fsync(fd_); 
+  }
+  void seek(off_t offset) { 
+    ::lseek(fd_, offset, SEEK_SET); 
+  }
+
   [[nodiscard]] int fd() const { return fd_; }
   [[nodiscard]] fs::path path() const { return path_; }
  private:
   fs::path path_;
   int fd_;
 };
-
-template<typename... Args>
-static inline std::fstream open_fstream(const fs::path& path, Args&&... args) {
-  std::fstream stream;
-  stream.open(path, std::forward<Args>(args)...);
-  if (!stream.is_open()) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {}", path.string()); }
-  return stream;
-}
 
 static inline void fallocate_file(const fs::path& dir, const std::string& filename, size_t size) {
   if (!fs::exists(dir)) { fs::create_directories(dir); }
@@ -42,14 +68,6 @@ static inline void fallocate_file(const fs::path& dir, const std::string& filena
   }
 
   close(fd);
-}
-
-static inline void fsync_file(const fs::path& path) {
-  int fd = open(path.c_str(), O_WRONLY);
-  if (fd >= 0) {
-    fsync(fd);
-    close(fd);
-  }
 }
 
 } // namespace mllm::models::qwen3_i

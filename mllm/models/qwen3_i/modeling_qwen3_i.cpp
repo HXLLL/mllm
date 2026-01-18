@@ -261,7 +261,6 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   auto seq_len = token_ids.shape()[1];
   auto num_chunks = static_cast<int>((seq_len + chunk_size_ - 1) / chunk_size_);
 
-  state_.prepareForLayerwiseLoad();
   auto scheduler = std::make_unique<SimpleGridScheduler>(num_layers_, num_chunks, state_, parameter_loader_);
 
   // 1. Handle embedding for all chunks (outside grid)
