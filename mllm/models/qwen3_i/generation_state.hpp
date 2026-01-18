@@ -18,13 +18,8 @@ struct CacheRange {
 
 enum class GenerationPhase {
   kInit,
-  kLoad,
-  kLazyLoad,
-  kCheckpoint,
-  kStart,
-  kStartDecode,
-  kGenerate,
-  kEnd,
+  kPrefill,
+  kDecode,
 };
 
 class GenerationState {
@@ -40,9 +35,9 @@ class GenerationState {
   void checkpoint();
 
   /* state machine transitions */
-  void start(const Tensor& token_ids);
-  [[nodiscard]] int hasStarted() const { return started_; }
+  void startPrefill(const Tensor& token_ids);
   void startDecode(const Tensor& token_id);
+  [[nodiscard]] GenerationPhase getPhase() const { return phase_; }
 
   /* getter for metadata */
   [[nodiscard]] int getMaxLength() const { return max_length_; }
@@ -117,8 +112,8 @@ class GenerationState {
   int kv_heads_;
   int kv_dim_;
   int hidden_size_;
-  int started_{};
   std::vector<int64_t> input_tokens_;
+  GenerationPhase phase_{GenerationPhase::kInit};
 
   /* watermark */
   std::vector<int8_t> layer_watermark_;       // -1 = not computed, N = h_cache_[0..N] valid

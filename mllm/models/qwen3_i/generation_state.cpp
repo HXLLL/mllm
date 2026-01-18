@@ -14,13 +14,13 @@ namespace fs = std::filesystem;
 GenerationState::GenerationState(const fs::path& path) : path_(path) {}
 
 void GenerationState::create(const Qwen3Config& cfg) {
+  createFiles();
+  openFiles();
+
   initMetadata(cfg);
   initWatermark();
   initLoadedState();
   initCaches();
-
-  createFiles();
-  openFiles();
 
   checkpoint();
 }
@@ -70,8 +70,6 @@ void GenerationState::checkpoint() {
   auto tracer = Context::instance().tracer();
   tracer->record<CheckpointBeginEvent>();
 
-  if (!fs::exists(path_)) { fs::create_directories(path_); }
-
   saveMetadata();
   tracer->record<CheckpointMetadataEvent>();
 
@@ -102,16 +100,17 @@ void GenerationState::checkpoint() {
   tracer->record<CheckpointCompleteEvent>(count);
 }
 
-void GenerationState::start(const Tensor& token_ids) {
+void GenerationState::startPrefill(const Tensor& token_ids) {
   MLLM_RT_ASSERT(token_ids.shape()[0] == 1 && token_ids.dtype() == kInt64);
   auto seq_len = token_ids.shape()[1];
   auto* token_ids_ptr = token_ids.cptrAt<int64_t>({0, 0});
   input_tokens_.assign(token_ids_ptr, token_ids_ptr + seq_len);
-  started_ = 1;
+  phase_ = GenerationPhase::kPrefill;
 }
 
 void GenerationState::startDecode(const Tensor& token_id) {
   MLLM_RT_ASSERT(token_id.shape() == std::vector<int32_t>({1, 1}) && token_id.dtype() == kInt64);
+  phase_ = GenerationPhase::kDecode;
 }
 
 int GenerationState::getMinWatermark(int offset, int count) const {
@@ -211,7 +210,7 @@ void GenerationState::loadMetadata() {
   kv_heads_ = json_obj.at("kv_heads");
   kv_dim_ = json_obj.at("kv_dim");
   hidden_size_ = json_obj.at("hidden_size");
-  started_ = json_obj.at("started");
+  phase_ = static_cast<GenerationPhase>(json_obj.at("phase"));
   input_tokens_ = json_obj.at("input_tokens").get<std::vector<int64_t>>();
 }
 
@@ -224,7 +223,7 @@ void GenerationState::saveMetadata() const {
   json_obj["kv_dim"] = kv_dim_;
   json_obj["hidden_size"] = hidden_size_;
   json_obj["input_tokens"] = input_tokens_;
-  json_obj["started"] = started_;
+  json_obj["phase"] = static_cast<int>(phase_);
   
   auto metadata_file = FileDescriptor(path_ / "metadata.json");
   auto json_str = json_obj.dump(2);
@@ -346,6 +345,8 @@ void GenerationState::loadLayerKVCacheImpl(FileDescriptor& file, std::vector<Ten
 }
 
 void GenerationState::createFiles() {
+  if (!fs::exists(path_)) { fs::create_directories(path_); }
+
   size_t kv_cache_size = static_cast<size_t>(layer_nums_) * max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE;
   size_t h_cache_size = static_cast<size_t>(layer_nums_ + 1) * max_length_ * hidden_size_ * ELEMENT_SIZE;
 
