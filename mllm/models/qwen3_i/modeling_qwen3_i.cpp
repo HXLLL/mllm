@@ -222,7 +222,7 @@ Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg, Generation
   embedding_ = reg<nn::Embedding>("embed_tokens", cfg.vocab_size, cfg.hidden_size);
 }
 
-void Qwen3Text::loadFromDisk() {
+void Qwen3Text::loadMiscParams() {
   auto prefix = getModuleName() + ".";
   parameter_loader_.loadTensor(prefix + "embed_tokens.weight");
   parameter_loader_.loadTensor(prefix + "norm.weight");
@@ -332,31 +332,31 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
 
 /* ARGeneration Implementation */
 
-Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg, GenerationState& state,
-                                                           ParameterLoader& parameter_loader, int chunk_size)
-    : parameter_loader_(parameter_loader),
-      cfg_(cfg),
+Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cfg,
+                                                           GenerationState& state,
+                                                           ParameterLoader& parameter_loader,
+                                                           int chunk_size)
+    : cfg_(cfg),
       state_(state),
-      llm_(reg<Qwen3Text>("model", cfg_, state_, parameter_loader_, chunk_size)) {
+      parameter_loader_(parameter_loader),
+      llm_(reg<Qwen3Text>("model", cfg_, state_, parameter_loader_, chunk_size)),
+      lm_head_(reg<nn::Linear>("lm_head_out", cfg_.hidden_size, cfg_.vocab_size, false,
+                               cfg_.linear_impl_type)) {
   MLLM_INFO("Initializing intermittent Qwen3 model");
 
-  eos_token_id_ = cfg_.end_of_text_token_id;
-  max_length_ = cfg_.max_cache_length;
-  tie_word_embeddings_ = cfg_.tie_word_embeddings;
+  eos_token_id_ = cfg.end_of_text_token_id;
+  max_length_ = cfg.max_cache_length;
+  tie_word_embeddings_ = cfg.tie_word_embeddings;
 
-  if (tie_word_embeddings_) {
-    lm_head_ = reg<nn::Linear>("lm_head_out", cfg_.hidden_size, cfg_.vocab_size, false, cfg_.linear_impl_type);
-  }
-  registerBuffer("inv_freq", makeRoPEInvFreq(cfg_.head_dim, cfg_.rope_theta));
+  MLLM_RT_ASSERT(tie_word_embeddings_);  //  "For simplicity, tie_word_embeddings_ must be true"
+  registerBuffer("inv_freq", makeRoPEInvFreq(cfg.head_dim, cfg.rope_theta));
 }
 
 void Qwen3IntermittentForCausalLM::loadMiscParams() {
   // Load embedding, norm, and lm_head at startup (layers are loaded on-demand)
-  llm_.loadFromDisk();
-  if (tie_word_embeddings_) {
-    parameter_loader_.loadTensor("lm_head_out.weight"); 
-    lm_head_.impl()->load(parameter_loader_.getParameterFile());
-  }
+  llm_.loadMiscParams();
+  parameter_loader_.loadTensor("lm_head_out.weight");
+  lm_head_.impl()->load(parameter_loader_.getParameterFile());
 }
 
 ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationOutputPast& input,
@@ -379,7 +379,8 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
     for (int s = 0; s < seq_len; ++s) { *position_ids.ptrAt<int64_t>({0, s}) = s; }
   }
 
-  auto [llm_embedding_sin, llm_embedding_cos] = makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
+  auto [llm_embedding_sin, llm_embedding_cos] =
+      makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
   int offset = *position_ids.cptrAt<int64_t>({0, 0});
   sequence = llm_(sequence, llm_embedding_sin, llm_embedding_cos, AnyValue(offset))[0];
   {
@@ -394,39 +395,14 @@ ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationO
   };
 }
 
-void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& input, const ARGenerationArgs& args,
+void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& input,
+                                                  const ARGenerationArgs& args,
                                                   const std::function<void(int64_t)>& callback) {
-  float temperature = args.count("temperature") ? args.at("temperature").get<float>() : 1.0f;
-  int top_k = args.count("top_k") ? args.at("top_k").get<int>() : 0;
-  float top_p = args.count("top_p") ? args.at("top_p").get<float>() : 0.0f;
-  int max_length = args.count("max_length") ? args.at("max_length").get<int>() : max_length_;
-  int eos_token_id = args.count("eos_token_id") ? args.at("eos_token_id").get<int>() : eos_token_id_;
-  bool do_sample = args.count("do_sample") ? args.at("do_sample").get<bool>() : do_sample_;
-  int max_decode_tokens = args.count("max_decode_tokens") ? args.at("max_decode_tokens").get<int>() : max_length;
-  bool ignore_eos = args.count("ignore_eos") ? args.at("ignore_eos").get<bool>() : false;
-  bool use_sampling = do_sample || (temperature != 1.0f) || (top_k > 0) || (top_p > 0.0f);
-
-  if (max_decode_tokens == 0) {
-    max_decode_tokens = max_length;
-  }
-
-  auto predict_next_token = [&](Tensor& logits) {
-    if (use_sampling) {
-      if (top_k > 0) {
-        return sampleTopK(logits, top_k, temperature);
-      } else if (top_p > 0.0f) {
-        return sampleTopP(logits, top_p, temperature);
-      } else {
-        return sampleTemperature(logits, temperature);
-      }
-    } else {
-      return sampleGreedy(logits);
-    }
-  };
+  GenConfig gencfg = makeGenConfig(args);
 
   auto do_forward = [&, this](ARGenerationOutputPast& past) {
     past = forward(past, args);
-    int64_t next_token = predict_next_token(past["sequence"]);
+    int64_t next_token = predictNextToken(past["sequence"], gencfg);
     callback(next_token);
     return next_token;
   };
@@ -439,13 +415,46 @@ void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& 
 
   ARGenerationOutputPast decode_input = prefill_input;
   decodeEventStartTimePoint();
-  for (int i = 0; i < max_decode_tokens; ++i, ++ar_steps_) {
-    if (!ignore_eos && next_token == eos_token_id) { break; }
-    decode_input["sequence"] = Tensor::empty({1, 1}, kInt64, prefill_input["sequence"].device()).alloc();
+  for (int i = 0; i < gencfg.max_decode_tokens; ++i, ++ar_steps_) {
+    if (!gencfg.ignore_eos && next_token == gencfg.eos_token_id) { break; }
+    decode_input["sequence"] =
+        Tensor::empty({1, 1}, kInt64, prefill_input["sequence"].device()).alloc();
     decode_input["sequence"].at<mllm_int64_t>({0, 0}) = next_token;
     next_token = do_forward(decode_input);
   }
   decodeEventEndTimePoint();
+}
+
+Qwen3IntermittentForCausalLM::GenConfig Qwen3IntermittentForCausalLM::makeGenConfig(
+    const ARGenerationArgs& args) {
+  auto cfg = GenConfig{
+      .temperature = args.count("temperature") ? args.at("temperature").get<float>() : 1.0f,
+      .top_k = args.count("top_k") ? args.at("top_k").get<int>() : 0,
+      .top_p = args.count("top_p") ? args.at("top_p").get<float>() : 0.0f,
+      .max_length = args.count("max_length") ? args.at("max_length").get<int>() : max_length_,
+      .eos_token_id =
+          args.count("eos_token_id") ? args.at("eos_token_id").get<int>() : eos_token_id_,
+      .do_sample = args.count("do_sample") ? args.at("do_sample").get<bool>() : do_sample_,
+      .max_decode_tokens =
+          args.count("max_decode_tokens") && args.at("max_decode_tokens").get<int>() > 0
+              ? args.at("max_decode_tokens").get<int>()
+              : max_length_,
+      .ignore_eos = args.count("ignore_eos") ? args.at("ignore_eos").get<bool>() : false,
+  };
+  cfg.use_sampling =
+      cfg.do_sample || (cfg.temperature != 1.0f) || (cfg.top_k > 0) || (cfg.top_p > 0.0f);
+  return cfg;
+}
+
+int64_t Qwen3IntermittentForCausalLM::predictNextToken(Tensor& logits, GenConfig& cfg) {
+  if (!cfg.use_sampling) { return sampleGreedy(logits); }
+  if (cfg.top_k > 0) {
+    return sampleTopK(logits, cfg.top_k, cfg.temperature);
+  } else if (cfg.top_p > 0.0f) {
+    return sampleTopP(logits, cfg.top_p, cfg.temperature);
+  } else {
+    return sampleTemperature(logits, cfg.temperature);
+  }
 }
 
 }  // namespace mllm::models::qwen3_i

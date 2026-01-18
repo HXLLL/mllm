@@ -125,7 +125,7 @@ class Qwen3Text final : public nn::Module {
   Qwen3Text(const std::string& name, const Qwen3Config& cfg, GenerationState& state, ParameterLoader& parameter_loader, int chunk_size);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
 
-  void loadFromDisk();
+  void loadMiscParams();
 
   [[nodiscard]] std::vector<std::string> collectLayerParamNames(int layer) const;
 
@@ -159,13 +159,27 @@ class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {
   void loadMiscParams();
 
  private:
-  ParameterLoader& parameter_loader_;
-  const Qwen3Config& cfg_;
-  GenerationState& state_;
-  Qwen3Text llm_;
-  nn::Linear lm_head_;
+  struct GenConfig {
+    float temperature;
+    int top_k;
+    float top_p;
+    int max_length;
+    int eos_token_id;
+    bool do_sample;
+    int max_decode_tokens;
+    bool ignore_eos;
+    bool use_sampling;
+  };
+  GenConfig makeGenConfig(const ARGenerationArgs& args);
+  int64_t predictNextToken(Tensor& logits, GenConfig& cfg);
 
   bool tie_word_embeddings_ = false;
+  const Qwen3Config& cfg_;
+  GenerationState& state_;
+  ParameterLoader& parameter_loader_;
+
+  Qwen3Text llm_;
+  nn::Linear lm_head_;
 };
 
 }  // namespace mllm::models::qwen3_i

@@ -27,6 +27,7 @@ void ParameterLoader::load() {
 
 void ParameterLoader::lazyLoad() {
   loadHeader();
+  dumpTensorStatus();
 }
 
 void ParameterLoader::loadTensor(const std::string& name) {
