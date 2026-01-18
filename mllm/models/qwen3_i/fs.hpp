@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fcntl.h>
 #include <unistd.h>
+#include <cstring>
 
 #include "mllm/utils/Common.hpp"
 #include "mllm/utils/Log.hpp"
@@ -16,29 +17,32 @@ class FileDescriptor {
   FileDescriptor() : fd_(-1) {}
   explicit FileDescriptor(const fs::path& path) : path_(path) {
     fd_ = open(path.c_str(), O_RDWR);
-    if (fd_ < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {}", path.string()); }
+    if (fd_ < 0) {
+      MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to open file {}, errno: {} ({})", path.string(),
+                      errno, strerror(errno));
+    }
   }
 
   ~FileDescriptor() { close(fd_); }
 
   size_t read(void* buffer, size_t count) {
     int ret = ::read(fd_, buffer, count); 
-    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to read from file {}", path_.string()); }
+    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to read from file {}, errno: {} ({})", path_.string(), errno, strerror(errno)); }
     return ret;
   }
    size_t write(const void* buffer, size_t count) { 
     int ret = ::write(fd_, buffer, count); 
-    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to write to file {}", path_.string()); }
+    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to write to file {}, errno: {} ({})", path_.string(), errno, strerror(errno)); }
     return ret;
   }
   size_t pread(void* buffer, size_t count, off_t offset) {
     int ret = ::pread(fd_, buffer, count, offset);
-    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to read from file {}", path_.string()); }
+    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to read from file {}, errno: {} ({})", path_.string(), errno, strerror(errno)); }
     return ret;
   }
   size_t pwrite(const void* buffer, size_t count, off_t offset) {
     int ret = ::pwrite(fd_, buffer, count, offset);
-    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to write to file {}", path_.string()); }
+    if (ret < 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "Failed to write to file {}, errno: {} ({})", path_.string(), errno, strerror(errno)); }
     return ret;
   }
   void fsync() { 
