@@ -64,11 +64,9 @@ class Qwen3Service {
     if (std::filesystem::exists(config_.state_path)) {
       if (config_.lazy_load) {
         state_.lazyLoad();
-        parameter_loader_.lazyLoad();
       } else {
         mllm::Timer load_state_timer;
         state_.load();
-        parameter_loader_.load();
         fmt::print("Generation state loaded in {}ms\n", load_state_timer.elapsed_ms());
       }
     } else {
@@ -78,7 +76,15 @@ class Qwen3Service {
 
     mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadBeginEvent>();
     mllm::Timer load_model_timer;
-    model_.loadMiscParams();
+    if (config_.lazy_load) {
+      parameter_loader_.lazyLoad();
+      parameter_loader_.dumpTensorStatus();
+      model_.loadMinimalParams();
+    } else {
+      parameter_loader_.load();
+      model_.loadAllParams();
+    }
+    parameter_loader_.dumpTensorStatus();
     mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadCompleteEvent>();
     fmt::print("Model loaded in {}ms\n", load_model_timer.elapsed_ms());
   }
@@ -192,6 +198,7 @@ MLLM_MAIN({
         .chunk_size = chunk_size.get(),
         .max_decode_tokens = max_decode_tokens.get(),
         .ignore_eos = ignore_eos.get(),
+        .lazy_load = lazy_load.get(),
     };
     Qwen3Service qwen3_service(std::move(cfg));
     qwen3_service.load();

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-TASK_FILE="tasks/build_jetson_cross_debug.yaml"
+TASK_FILE="tasks/build_jetson_cross_debug_1.yaml"
 if [[ $# -gt 0 ]]; then
     TASK_FILE=$1
 fi
