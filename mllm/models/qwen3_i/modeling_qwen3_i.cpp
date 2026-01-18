@@ -352,11 +352,16 @@ Qwen3IntermittentForCausalLM::Qwen3IntermittentForCausalLM(const Qwen3Config& cf
   registerBuffer("inv_freq", makeRoPEInvFreq(cfg.head_dim, cfg.rope_theta));
 }
 
-void Qwen3IntermittentForCausalLM::loadMiscParams() {
+void Qwen3IntermittentForCausalLM::loadMinimalParams() {
   // Load embedding, norm, and lm_head at startup (layers are loaded on-demand)
   llm_.loadMiscParams();
   parameter_loader_.loadTensor("lm_head_out.weight");
   lm_head_.impl()->load(parameter_loader_.getParameterFile());
+}
+
+
+void Qwen3IntermittentForCausalLM::loadAllParams() {
+  load(parameter_loader_.getParameterFile());
 }
 
 ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationOutputPast& input,
