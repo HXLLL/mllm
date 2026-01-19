@@ -173,6 +173,8 @@ class Qwen3IntermittentForCausalLM : public ARGeneration, public nn::Module {
   };
   GenConfig makeGenConfig(const ARGenerationArgs& args);
   int64_t predictNextToken(Tensor& logits, GenConfig& cfg);
+  Tensor makePositionIds(int start_pos, int count);
+  Tensor makeDecodeSequence(int64_t token);
 
   bool tie_word_embeddings_ = false;
   const Qwen3Config& cfg_;

@@ -367,32 +367,19 @@ void Qwen3IntermittentForCausalLM::loadAllParams() {
 ARGenerationOutputPast Qwen3IntermittentForCausalLM::forward(const ARGenerationOutputPast& input,
                                                              const ARGenerationArgs& args) {
   auto sequence = input.at("sequence");
-  auto batch_size = sequence.shape()[0];
-  MLLM_RT_ASSERT_EQ(batch_size, 1);
-  auto seq_len = sequence.shape()[1];
+  auto position_ids = input.at("position_ids");
 
-  Tensor position_ids;
-  if (input.count("position_ids")) {  // decode phase
-    position_ids = input.at("position_ids");
-    MLLM_RT_ASSERT_EQ(seq_len, 1);
-    auto last_pos = *position_ids.cptrAt<int64_t>({0, position_ids.shape()[1] - 1});
-    position_ids = Tensor::empty({batch_size, 1}, kInt64, kCPU).alloc();
-    *position_ids.ptrAt<int64_t>({0, 0}) = last_pos + 1;
-    state_.startDecode(sequence);
-  } else {  // prefill phase
-    position_ids = Tensor::empty({batch_size, seq_len}, kInt64, kCPU).alloc();
-    for (int s = 0; s < seq_len; ++s) { *position_ids.ptrAt<int64_t>({0, s}) = s; }
-  }
+  MLLM_RT_ASSERT_EQ(sequence.shape()[0], 1); // currently only support batch size 1
 
   auto [llm_embedding_sin, llm_embedding_cos] =
       makeRotaryPosEmbedding(position_ids, getBuffer("inv_freq"), 1.0f);
   int offset = *position_ids.cptrAt<int64_t>({0, 0});
   sequence = llm_(sequence, llm_embedding_sin, llm_embedding_cos, AnyValue(offset))[0];
-  {
-    auto S = sequence.shape()[1];
-    sequence = sequence[{kAll, {S - 1}, kAll}];
-  }
-  if (tie_word_embeddings_) { sequence = lm_head_(sequence); }
+
+  // get output (last token)
+  auto S = sequence.shape()[1];
+  sequence = sequence[{kAll, {S - 1}, kAll}];
+  sequence = lm_head_(sequence);
 
   return {
       {"sequence", sequence},
@@ -413,18 +400,19 @@ void Qwen3IntermittentForCausalLM::streamGenerate(const ARGenerationOutputPast& 
   };
 
   ARGenerationOutputPast prefill_input = input;
+  int prefill_size = input.at("sequence").shape()[1];
+  prefill_input["position_ids"] = makePositionIds(0, prefill_size);
   prefillEventStartTimePoint();
   int64_t next_token = do_forward(prefill_input);
-  ar_prefill_tokens_ = prefill_input["sequence"].shape()[1];
+  ar_prefill_tokens_ = prefill_size;
   prefillEventEndTimePoint();
 
   ARGenerationOutputPast decode_input = prefill_input;
   decodeEventStartTimePoint();
   for (int i = 0; i < gencfg.max_decode_tokens; ++i, ++ar_steps_) {
     if (!gencfg.ignore_eos && next_token == gencfg.eos_token_id) { break; }
-    decode_input["sequence"] =
-        Tensor::empty({1, 1}, kInt64, prefill_input["sequence"].device()).alloc();
-    decode_input["sequence"].at<mllm_int64_t>({0, 0}) = next_token;
+    decode_input["sequence"] = makeDecodeSequence(next_token);
+    decode_input["position_ids"] = makePositionIds(prefill_size + i, 1);
     next_token = do_forward(decode_input);
   }
   decodeEventEndTimePoint();
@@ -460,6 +448,18 @@ int64_t Qwen3IntermittentForCausalLM::predictNextToken(Tensor& logits, GenConfig
   } else {
     return sampleTemperature(logits, cfg.temperature);
   }
+}
+
+Tensor Qwen3IntermittentForCausalLM::makePositionIds(int start_pos, int count) {
+  auto position_ids = Tensor::empty({1, count}, kInt64, kCPU).alloc();
+  for (int s = 0; s < count; ++s) { *position_ids.ptrAt<int64_t>({0, s}) = start_pos + s; }
+  return position_ids;
+}
+
+Tensor Qwen3IntermittentForCausalLM::makeDecodeSequence(int64_t token) {
+  auto sequence = Tensor::empty({1, 1}, kInt64, kCPU).alloc();
+  *sequence.ptrAt<int64_t>({0, 0}) = token;
+  return sequence;
 }
 
 }  // namespace mllm::models::qwen3_i
