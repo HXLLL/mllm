@@ -17,84 +17,92 @@ class H2KV;
 class KV2H;
 
 enum class TaskType {
-  kLoadParam,
-  kLoadKV,
-  kLoadH,
-  kCompute
+  kIO,
+  kCompute,
 };
 
-class GridTask {
- public:
-  GridTask(int layer, int chunk_id, const CacheRange& range, GenerationState& state) : state_(state), layer_(layer), chunk_id_(chunk_id), range_(range) {}
+enum class TaskStatus {
+  kPending,
+  kCompleted,
+  kFailed
+};
 
-  virtual ~GridTask() = default;
+class Task {
+ public:
+  Task() = default;
+  virtual ~Task() = default;
+
   virtual void execute() = 0;
   [[nodiscard]] virtual std::string name() const = 0;
   [[nodiscard]] virtual TaskType taskType() const = 0;
 
-  [[nodiscard]] int layer() const { return layer_; }
-  [[nodiscard]] int chunkId() const { return chunk_id_; }
-  [[nodiscard]] const CacheRange& range() const { return range_; }
-  [[nodiscard]] bool isCompleted() const { return completed_; }
-  [[nodiscard]] bool isIO() const { return taskType() == TaskType::kLoadParam || taskType() == TaskType::kLoadKV || taskType() == TaskType::kLoadH; }
-  [[nodiscard]] bool isCompute() const { return taskType() == TaskType::kCompute; }
+  [[nodiscard]] TaskStatus status() const { return status_; }
 
  protected:
-  void markCompleted() { completed_ = true; MLLM_INFO("{} completed", name()); }
-  GenerationState& state_;
+  void complete() { status_ = TaskStatus::kCompleted; MLLM_INFO("{} completed", name()); }
+  void fail() { status_ = TaskStatus::kFailed; MLLM_INFO("{} failed", name()); }
 
- private:
-  int layer_;
-  int chunk_id_;
-  CacheRange range_;
-  bool completed_{};
+  TaskStatus status_{TaskStatus::kPending};
 };
 
-class LoadParamTask : public GridTask {
+class LoadParamTask : public Task {
  public:
   LoadParamTask(int layer, const std::vector<std::string>& param_names, ParameterLoader& loader,
                 GenerationState& state);
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
-  [[nodiscard]] TaskType taskType() const override { return TaskType::kLoadParam; }
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
 
  private:
+  int layer_;
   std::vector<std::string> param_names_;
+
   ParameterLoader& loader_;
+  GenerationState& state_;
+};
+
+struct GridContext {
+  int layer;
+  int chunk_id;
+  CacheRange range;
+  GenerationState& state;
 };
 
 // Load K/V cache from checkpoint
-class LoadKVTask : public GridTask {
+class LoadKVTask : public Task {
  public:
-  LoadKVTask(int layer, int chunk_id, const CacheRange& range, GenerationState& state);
+  explicit LoadKVTask(const GridContext& ctx);
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
-  [[nodiscard]] TaskType taskType() const override { return TaskType::kLoadKV; }
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
+ private:
+  GridContext ctx_;
 };
 
 // Load hidden state from checkpoint
-class LoadHTask : public GridTask {
+class LoadHTask : public Task {
  public:
-  LoadHTask(int layer, int chunk_id, const CacheRange& range, GenerationState& state);
+  explicit LoadHTask(const GridContext& ctx);
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
-  [[nodiscard]] TaskType taskType() const override { return TaskType::kLoadH; }
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
+ private:
+  GridContext ctx_;
 };
 
 // Compute: H2KV + KV2H
-class ComputeTask : public GridTask {
+class ComputeTask : public Task {
  public:
-  ComputeTask(int layer, int chunk_id, const CacheRange& range, H2KV& h2kv, KV2H& kv2h, GenerationState& state,
-              const Tensor& sin_emb, const Tensor& cos_emb);
-
+  ComputeTask(const GridContext& ctx, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb, Tensor cos_emb);
   void execute() override;
   [[nodiscard]] std::string name() const override;
   [[nodiscard]] TaskType taskType() const override { return TaskType::kCompute; }
 
  private:
+  GridContext ctx_;
   H2KV& h2kv_;
   KV2H& kv2h_;
   Tensor sin_emb_;
