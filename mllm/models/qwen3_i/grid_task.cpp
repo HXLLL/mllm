@@ -11,9 +11,9 @@ namespace mllm::models::qwen3_i {
 
 // LoadParamTask
 
-LoadParamTask::LoadParamTask(int layer, ParameterLoader& loader, const std::vector<std::string>& param_names,
-                             GenerationState& state)
-    : GridTask(layer, 0, {layer, 0, 0}, state), loader_(loader), param_names_(param_names) {}
+LoadParamTask::LoadParamTask(int layer, const std::vector<std::string>& param_names,
+                             ParameterLoader& loader, GenerationState& state)
+    : GridTask(layer, 0, {layer, 0, 0}, state), param_names_(param_names), loader_(loader) {}
 
 void LoadParamTask::execute() {
   for (const auto& name : param_names_) {
@@ -84,10 +84,5 @@ void ComputeTask::execute() {
 }
 
 std::string ComputeTask::name() const { return "Compute[" + std::to_string(layer()) + "][" + std::to_string(chunkId()) + "]"; }
-
-GridCell::GridCell(const CacheRange& range, int chunk, GenerationState& state, H2KV& h2kv, KV2H& kv2h, const Tensor& sin_emb, const Tensor& cos_emb)
-    : load_kv(range.layer_idx, chunk, range, state),
-      load_h(range.layer_idx, chunk, range, state),
-      compute(range.layer_idx, chunk, range, h2kv, kv2h, state, sin_emb, cos_emb) {}
 
 }  // namespace mllm::models::qwen3_i

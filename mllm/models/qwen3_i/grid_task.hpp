@@ -52,15 +52,16 @@ class GridTask {
 
 class LoadParamTask : public GridTask {
  public:
-  LoadParamTask(int layer, ParameterLoader& loader, const std::vector<std::string>& param_names, GenerationState& state);
+  LoadParamTask(int layer, const std::vector<std::string>& param_names, ParameterLoader& loader,
+                GenerationState& state);
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
   [[nodiscard]] TaskType taskType() const override { return TaskType::kLoadParam; }
 
  private:
-  ParameterLoader& loader_;
   std::vector<std::string> param_names_;
+  ParameterLoader& loader_;
 };
 
 // Load K/V cache from checkpoint
@@ -98,16 +99,6 @@ class ComputeTask : public GridTask {
   KV2H& kv2h_;
   Tensor sin_emb_;
   Tensor cos_emb_;
-};
-
-struct GridCell {
-  LoadKVTask load_kv;
-  LoadHTask load_h;
-  ComputeTask compute;
-  CacheRange range;
-
-  GridCell(const CacheRange& range, int chunk, GenerationState& state, H2KV& h2kv, KV2H& kv2h, const Tensor& sin_emb,
-           const Tensor& cos_emb);
 };
 
 }  // namespace mllm::models::qwen3_i
