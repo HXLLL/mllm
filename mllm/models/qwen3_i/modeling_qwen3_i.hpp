@@ -67,13 +67,7 @@ class Qwen3Decoder final : public nn::Module {
   ParameterLoader& parameter_loader_;
 };
 
-class Task : public nn::Module {
- public:
-  Task() = default;
-  explicit Task(const std::string& name) : nn::Module(name) {}
-};
-
-class H2KV : public Task {
+class H2KV : public nn::Module {
  public:
   explicit H2KV(Qwen3Decoder& decoder, GenerationState& state);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
@@ -99,7 +93,7 @@ class H2KV : public Task {
   ParameterLoader &parameter_loader_;
 };
 
-class KV2H : public Task {
+class KV2H : public nn::Module {
  public:
   explicit KV2H(Qwen3Decoder& decoder, GenerationState& state);
   std::vector<Tensor> forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) override;
