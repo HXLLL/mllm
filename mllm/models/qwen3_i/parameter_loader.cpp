@@ -67,16 +67,15 @@ void ParameterLoader::dumpTensorStatus() const {
 
 
 void ParameterLoader::loadHeader() {
-  ModelFileV2Descriptor header;
-  file_.read(reinterpret_cast<char*>(&header), sizeof(ModelFileV2Descriptor));
+  file_.read(&header_, sizeof(ModelFileV2Descriptor));
 
-  MLLM_RT_ASSERT_EQ(MLLM_MODEL_FILE_V2_MAGIC_NUMBER, header.magic_number);
-  MLLM_RT_ASSERT_EQ(MLLM_MODEL_FILE_V2_VERSION, header.version);
+  MLLM_RT_ASSERT_EQ(MLLM_MODEL_FILE_V2_MAGIC_NUMBER, header_.magic_number);
+  MLLM_RT_ASSERT_EQ(MLLM_MODEL_FILE_V2_VERSION, header_.version);
 
   // Read all descriptors
-  std::vector<ModelFileV2ParamsDescriptor> param_descriptors(header.num_params);
-  size_t param_descriptors_size = header.num_params * sizeof(ModelFileV2ParamsDescriptor);
-  file_.pread(param_descriptors.data(), param_descriptors_size, header.params_desc_offset);
+  std::vector<ModelFileV2ParamsDescriptor> param_descriptors(header_.num_params);
+  size_t param_descriptors_size = header_.num_params * sizeof(ModelFileV2ParamsDescriptor);
+  file_.pread(param_descriptors.data(), param_descriptors_size, header_.params_desc_offset);
 
   // Build name -> descriptor map
   for (const auto& desc : param_descriptors) {
