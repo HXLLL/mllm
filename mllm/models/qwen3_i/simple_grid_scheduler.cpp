@@ -19,17 +19,8 @@ GridTask* SimpleGridScheduler::selectNext() {
     for (int chunk = 0; chunk < num_chunks_; ++chunk) {
       auto& cell = getCell(layer, chunk);
 
-      if (!cell.load_kv.isCompleted()) {
-        return &cell.load_kv;
-      }
-
-      // Check LoadH
-      if (!cell.load_h.isCompleted()) {
-        return &cell.load_h;
-      }
-
       // Check Compute (must also be ready)
-      if (!cell.compute.isCompleted() && isComputeReady(layer, chunk)) {
+      if (isComputeReady(layer, chunk)) {
         return &cell.compute;
       }
     }
