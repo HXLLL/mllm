@@ -264,7 +264,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   std::vector<LayerContext> layers;
   for (int i = 0; i < num_layers_; ++i) {
     auto param_names = collectLayerParamNames(i);
-    layers.emplace_back(i, param_names, h2kv_[i], kv2h_[i]);
+    layers.emplace_back(i, param_names, &h2kv_[i], &kv2h_[i]);
   }
 
   std::vector<ChunkContext> chunks;

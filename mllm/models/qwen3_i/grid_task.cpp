@@ -41,7 +41,7 @@ void LoadHTask::execute() {
 // ComputeTask
 
 void ComputeTask::execute() {
-  const auto& r = idx_.range;
+  auto& r = idx_.range;
 
   Tensor x = state_.getH(r);
 
