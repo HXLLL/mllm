@@ -1,19 +1,15 @@
 // Copyright (c) MLLM Team.
 // Licensed under the MIT License.
 
+#include "mllm/models/qwen3_i/modeling_qwen3_i.hpp"
 #include "mllm/models/qwen3_i/grid_task.hpp"
 
-#include "mllm/models/qwen3_i/modeling_qwen3_i.hpp"
 #include "mllm/utils/AnyValue.hpp"
 #include "mllm/utils/Common.hpp"
 
 namespace mllm::models::qwen3_i {
 
 // LoadParamTask
-
-LoadParamTask::LoadParamTask(int layer, const std::vector<std::string>& param_names,
-                             ParameterLoader& loader, GenerationState& state)
-    : Task(), layer_(layer), param_names_(param_names), loader_(loader), state_(state) {}
 
 void LoadParamTask::execute() {
   for (const auto& name : param_names_) {
@@ -23,11 +19,7 @@ void LoadParamTask::execute() {
   complete();
 }
 
-std::string LoadParamTask::name() const { return "LoadParam[" + std::to_string(layer_) + "]"; }
-
 // LoadKVTask
-
-LoadKVTask::LoadKVTask(const CellContext& ctx, GenerationState& state) : Task(), ctx_(ctx), state_(state) {}
 
 void LoadKVTask::execute() {
   const auto& r = ctx_.range;
@@ -37,11 +29,7 @@ void LoadKVTask::execute() {
   complete();
 }
 
-std::string LoadKVTask::name() const { return "LoadKV[" + std::to_string(ctx_.layer) + "][" + std::to_string(ctx_.chunk_id) + "]"; }
-
 // LoadHTask
-
-LoadHTask::LoadHTask(const CellContext& ctx, GenerationState& state) : Task(), ctx_(ctx), state_(state) {}
 
 void LoadHTask::execute() {
   const auto& r = ctx_.range;
@@ -50,28 +38,21 @@ void LoadHTask::execute() {
   complete();
 }
 
-std::string LoadHTask::name() const {
-  return "LoadH[" + std::to_string(ctx_.layer) + "][" + std::to_string(ctx_.chunk_id) + "]";
-}
-
 // ComputeTask
 
-ComputeTask::ComputeTask(const CellContext& ctx, GenerationState& state, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb,
-                         Tensor cos_emb)
-    : Task(),
-      ctx_(ctx),
-      state_(state),
-      h2kv_(h2kv),
-      kv2h_(kv2h),
-      sin_emb_(std::move(sin_emb)),
-      cos_emb_(std::move(cos_emb)) {}
+std::vector<Tensor> ComputeContext::h2kv(const Tensor& x) const {
+  return h2kv_(x, sin_emb_, cos_emb_);
+}
+Tensor ComputeContext::kv2h(const Tensor& h, const Tensor& q, const Tensor& k) const {
+  return kv2h_(h, q, k, AnyValue(range.offset))[0];
+}
 
 void ComputeTask::execute() {
   const auto& r = ctx_.range;
 
   Tensor x = state_.getH(r);
 
-  auto h2kv_result = h2kv_(x, sin_emb_, cos_emb_);
+  auto h2kv_result = ctx_.h2kv(x);
   auto& h = h2kv_result[0];
   auto& q = h2kv_result[1];
   auto& k = h2kv_result[2];
@@ -79,18 +60,13 @@ void ComputeTask::execute() {
 
   state_.updateKV(r, k, v);
 
-  int offset = r.offset;
-  Tensor x_out = kv2h_(h, q, k, AnyValue(offset))[0];
+  Tensor x_out = ctx_.kv2h(h, q, k);
 
   CacheRange next_range{r.layer_idx + 1, r.offset, r.count};
   state_.updateH(next_range, x_out);
 
   state_.checkpoint();
   complete();
-}
-
-std::string ComputeTask::name() const {
-  return "Compute[" + std::to_string(ctx_.layer) + "][" + std::to_string(ctx_.chunk_id) + "]";
 }
 
 }  // namespace mllm::models::qwen3_i
