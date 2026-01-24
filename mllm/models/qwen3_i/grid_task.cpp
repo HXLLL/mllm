@@ -22,7 +22,7 @@ void LoadParamTask::execute() {
 // LoadKVTask
 
 void LoadKVTask::execute() {
-  const auto& r = ctx_.range;
+  const auto& r = idx_.range;
   MLLM_RT_ASSERT(!state_.isKVLoaded(r));
   state_.loadLayerKCache(r);
   state_.loadLayerVCache(r);
@@ -32,7 +32,7 @@ void LoadKVTask::execute() {
 // LoadHTask
 
 void LoadHTask::execute() {
-  const auto& r = ctx_.range;
+  const auto& r = idx_.range;
   MLLM_RT_ASSERT(!state_.isHLoaded(r));
   state_.loadLayerHCache(r);
   complete();
@@ -40,19 +40,12 @@ void LoadHTask::execute() {
 
 // ComputeTask
 
-std::vector<Tensor> ComputeContext::h2kv(const Tensor& x) const {
-  return h2kv_(x, sin_emb_, cos_emb_);
-}
-Tensor ComputeContext::kv2h(const Tensor& h, const Tensor& q, const Tensor& k) const {
-  return kv2h_(h, q, k, AnyValue(range.offset))[0];
-}
-
 void ComputeTask::execute() {
-  const auto& r = ctx_.range;
+  const auto& r = idx_.range;
 
   Tensor x = state_.getH(r);
 
-  auto h2kv_result = ctx_.h2kv(x);
+  auto h2kv_result = h2kv_(x, sin_emb_, cos_emb_);
   auto& h = h2kv_result[0];
   auto& q = h2kv_result[1];
   auto& k = h2kv_result[2];
@@ -60,7 +53,7 @@ void ComputeTask::execute() {
 
   state_.updateKV(r, k, v);
 
-  Tensor x_out = ctx_.kv2h(h, q, k);
+  Tensor x_out = kv2h_(h, q, k, AnyValue(r.offset))[0];
 
   CacheRange next_range{r.layer_idx + 1, r.offset, r.count};
   state_.updateH(next_range, x_out);

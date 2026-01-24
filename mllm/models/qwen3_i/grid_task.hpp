@@ -65,7 +65,7 @@ class LoadParamTask : public Task {
   GenerationState& state_;
 };
 
-struct CellContext {
+struct CellIndex {
   int layer;
   int chunk_id;
   CacheRange range;
@@ -74,61 +74,51 @@ struct CellContext {
 // Load K/V cache from checkpoint
 class LoadKVTask : public Task {
  public:
-  LoadKVTask(const CellContext& ctx, GenerationState& state) : Task(), ctx_(ctx), state_(state) {}
+  LoadKVTask(const CellIndex& idx, GenerationState& state) : Task(), idx_(idx), state_(state) {}
 
   void execute() override;
   [[nodiscard]] std::string name() const override {
-    return fmt::format("LoadKV[{}][{}]", ctx_.layer, ctx_.chunk_id);
+    return fmt::format("LoadKV[{}][{}]", idx_.layer, idx_.chunk_id);
   }
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
  private:
-  CellContext ctx_;
+  CellIndex idx_;
   GenerationState& state_;
 };
 
 // Load hidden state from checkpoint
 class LoadHTask : public Task {
  public:
-  LoadHTask(const CellContext& ctx, GenerationState& state) : Task(), ctx_(ctx), state_(state) {}
+  LoadHTask(const CellIndex& idx, GenerationState& state) : Task(), idx_(idx), state_(state) {}
 
   void execute() override;
   [[nodiscard]] std::string name() const override {
-    return fmt::format("LoadH[{}][{}]", ctx_.layer, ctx_.chunk_id);
+    return fmt::format("LoadH[{}][{}]", idx_.layer, idx_.chunk_id);
   }
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
  private:
-  CellContext ctx_;
+  CellIndex idx_;
   GenerationState& state_;
 };
 
 // Compute: H2KV + KV2H
 
-class ComputeContext: public CellContext {
- public:
-  ComputeContext(CellContext& ctx, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb, Tensor cos_emb)
-      : h2kv_(h2kv), kv2h_(kv2h), sin_emb_(std::move(sin_emb)), cos_emb_(std::move(cos_emb)) {}
-
-  [[nodiscard]] std::vector<Tensor> h2kv(const Tensor& x) const;
-  [[nodiscard]] Tensor kv2h(const Tensor& h, const Tensor& q, const Tensor& k) const;
-
- private:
-  H2KV& h2kv_;
-  KV2H& kv2h_;
-  Tensor sin_emb_;
-  Tensor cos_emb_;
-};
 class ComputeTask : public Task {
  public:
-  ComputeTask(const ComputeContext& ctx, GenerationState& state)
-      : Task(), ctx_(ctx), state_(state) {}
+  ComputeTask(const CellIndex& idx, H2KV& h2kv, KV2H& kv2h, const Tensor &sin_emb, const Tensor &cos_emb, GenerationState& state)
+      : Task(), idx_(idx), h2kv_(h2kv), kv2h_(kv2h), sin_emb_(sin_emb), cos_emb_(cos_emb), state_(state) {}
   void execute() override;
   [[nodiscard]] std::string name() const override {
-    return fmt::format("Compute[{}][{}]", ctx_.layer, ctx_.chunk_id);
+    return fmt::format("Compute[{}][{}]", idx_.layer, idx_.chunk_id);
   }
   [[nodiscard]] TaskType taskType() const override { return TaskType::kCompute; }
 
  private:
-  ComputeContext ctx_;
+  CellIndex idx_;
+  H2KV& h2kv_;
+  KV2H& kv2h_;
+  Tensor sin_emb_;
+  Tensor cos_emb_;
   GenerationState& state_;
 };
 
