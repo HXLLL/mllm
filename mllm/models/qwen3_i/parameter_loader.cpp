@@ -54,6 +54,27 @@ void ParameterLoader::loadTensor(const std::string& name) {
   parameter_file_->push(name, tensor);
 }
 
+void ParameterLoader::registerLayer(int layer, std::vector<std::string> tensor_names) {
+  if (layer >= static_cast<int>(layer_tensors_.size())) {
+    layer_tensors_.resize(layer + 1);
+    layer_loaded_.resize(layer + 1, false);
+  }
+  layer_tensors_[layer] = std::move(tensor_names);
+}
+
+void ParameterLoader::loadLayer(int layer) {
+  MLLM_RT_ASSERT(layer >= 0 && layer < static_cast<int>(layer_tensors_.size()));
+  for (const auto& name : layer_tensors_[layer]) {
+    loadTensor(name);
+  }
+  layer_loaded_[layer] = true;
+}
+
+bool ParameterLoader::isLayerLoaded(int layer) const {
+  if (layer < 0 || layer >= static_cast<int>(layer_loaded_.size())) return false;
+  return layer_loaded_[layer];
+}
+
 void ParameterLoader::dumpTensorStatus() const {
   fmt::print("ParameterLoader tensor status (total: {}):\n", header_.num_params);
   int loaded_count = 0;

@@ -57,7 +57,6 @@ class GenerationState {
   /* getter for loaded state */
   [[nodiscard]] bool isKVLoaded(const CacheRange& range) const { return isRangeLoaded(k_loaded_, range) && isRangeLoaded(v_loaded_, range); }
   [[nodiscard]] bool isHLoaded(const CacheRange& range) const { return isRangeLoaded(h_loaded_, range); }
-  [[nodiscard]] bool isParamLoaded(int layer) const { return param_loaded_[layer]; }
 
   /* cache lazy loading */
   void loadLayerKCache(const CacheRange& range);
@@ -125,7 +124,6 @@ class GenerationState {
   std::vector<uint8_t> k_loaded_;  // [layer_nums_ * max_length_]
   std::vector<uint8_t> v_loaded_;  // [layer_nums_ * max_length_]
   std::vector<uint8_t> h_loaded_;  // [(layer_nums_ + 1) * max_length_]
-  std::vector<uint8_t> param_loaded_;  // [layer_nums_]
 
   /* cache */
   std::vector<Tensor> k_cache_;  // Shape: [layer_nums, 1, q_heads, max_cache_length, kv_dims]

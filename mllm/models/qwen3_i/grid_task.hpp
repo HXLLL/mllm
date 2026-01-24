@@ -4,10 +4,8 @@
 #pragma once
 
 #include <string>
-#include <vector>
 
-#include "mllm/models/qwen3_i/generation_state.hpp"
-#include "mllm/models/qwen3_i/parameter_loader.hpp"
+#include "mllm/models/qwen3_i/runtime_context.hpp"
 #include "mllm/core/Tensor.hpp"
 
 namespace mllm::models::qwen3_i {
@@ -49,9 +47,7 @@ class Task {
 
 class LoadParamTask : public Task {
  public:
-  LoadParamTask(int layer, const std::vector<std::string>& param_names, ParameterLoader& loader,
-                GenerationState& state)
-      : layer_(layer), param_names_(param_names), loader_(loader), state_(state) {}
+  LoadParamTask(int layer, RuntimeContext& ctx) : layer_(layer), ctx_(ctx) {}
 
   void execute() override;
   [[nodiscard]] std::string name() const override {
@@ -62,10 +58,7 @@ class LoadParamTask : public Task {
 
  private:
   int layer_;
-  std::vector<std::string> param_names_;
-
-  ParameterLoader& loader_;
-  GenerationState& state_;
+  RuntimeContext& ctx_;
 };
 
 struct CellIndex {
@@ -77,7 +70,7 @@ struct CellIndex {
 // Load K/V cache from checkpoint
 class LoadKVTask : public Task {
  public:
-  LoadKVTask(const CellIndex& idx, GenerationState& state) : Task(), idx_(idx), state_(state) {}
+  LoadKVTask(const CellIndex& idx, RuntimeContext& ctx) : Task(), idx_(idx), ctx_(ctx) {}
 
   void execute() override;
   [[nodiscard]] std::string name() const override {
@@ -88,13 +81,13 @@ class LoadKVTask : public Task {
 
  private:
   CellIndex idx_;
-  GenerationState& state_;
+  RuntimeContext& ctx_;
 };
 
 // Load hidden state from checkpoint
 class LoadHTask : public Task {
  public:
-  LoadHTask(const CellIndex& idx, GenerationState& state) : Task(), idx_(idx), state_(state) {}
+  LoadHTask(const CellIndex& idx, RuntimeContext& ctx) : Task(), idx_(idx), ctx_(ctx) {}
 
   void execute() override;
   [[nodiscard]] std::string name() const override {
@@ -105,23 +98,23 @@ class LoadHTask : public Task {
 
  private:
   CellIndex idx_;
-  GenerationState& state_;
+  RuntimeContext& ctx_;
 };
 
 // Compute: H2KV + KV2H
 
 class ComputeTask : public Task {
  public:
-  ComputeTask(const CellIndex& idx, H2KV& h2kv, KV2H& kv2h, const Tensor &sin_emb, const Tensor &cos_emb, GenerationState& state)
-      : Task(), idx_(idx), h2kv_(h2kv), kv2h_(kv2h), sin_emb_(sin_emb), cos_emb_(cos_emb), state_(state) {}
+  ComputeTask(const CellIndex& idx, H2KV& h2kv, KV2H& kv2h, const Tensor& sin_emb, const Tensor& cos_emb, RuntimeContext& ctx)
+      : Task(), idx_(idx), h2kv_(h2kv), kv2h_(kv2h), sin_emb_(sin_emb), cos_emb_(cos_emb), ctx_(ctx) {}
   void execute() override;
   [[nodiscard]] std::string name() const override {
     return fmt::format("Compute[{}][{}]", idx_.layer, idx_.chunk_id);
   }
   [[nodiscard]] TaskType taskType() const override { return TaskType::kCompute; }
   [[nodiscard]] bool isReady() const override {
-    return state_.isParamLoaded(idx_.layer) && state_.isHLoaded(idx_.range)
-           && state_.isKVLoaded({idx_.layer, 0, idx_.range.offset});
+    return ctx_.loader().isLayerLoaded(idx_.layer) && ctx_.state().isHLoaded(idx_.range)
+           && ctx_.state().isKVLoaded({idx_.layer, 0, idx_.range.offset});
   }
 
  private:
@@ -130,7 +123,7 @@ class ComputeTask : public Task {
   KV2H& kv2h_;
   Tensor sin_emb_;
   Tensor cos_emb_;
-  GenerationState& state_;
+  RuntimeContext& ctx_;
 };
 
 }  // namespace mllm::models::qwen3_i

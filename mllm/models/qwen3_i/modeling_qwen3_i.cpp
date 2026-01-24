@@ -5,6 +5,7 @@
 #include "mllm/models/qwen3_i/generation_state.hpp"
 #include "mllm/models/qwen3_i/grid_task.hpp"
 #include "mllm/models/qwen3_i/qwen3_events.hpp"
+#include "mllm/models/qwen3_i/runtime_context.hpp"
 #include "mllm/models/qwen3_i/simple_grid_scheduler.hpp"
 #include "mllm/nn/Functional.hpp"
 #include "mllm/nn/Module.hpp"
@@ -220,6 +221,10 @@ Qwen3Text::Qwen3Text(const std::string& name, const Qwen3Config& cfg, Generation
   }
   norm_ = reg<nn::RMSNorm>("norm", cfg.rms_norm_eps);
   embedding_ = reg<nn::Embedding>("embed_tokens", cfg.vocab_size, cfg.hidden_size);
+
+  for (int i = 0; i < num_layers_; ++i) {
+    parameter_loader_.registerLayer(i, collectLayerParamNames(i));
+  }
 }
 
 void Qwen3Text::loadMiscParams() {
@@ -261,10 +266,12 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   auto seq_len = token_ids.shape()[1];
   auto num_chunks = static_cast<int>((seq_len + chunk_size_ - 1) / chunk_size_);
 
+  RuntimeContext ctx(state_, parameter_loader_);
+
   std::vector<LayerContext> layers;
+  layers.reserve(num_layers_);
   for (int i = 0; i < num_layers_; ++i) {
-    auto param_names = collectLayerParamNames(i);
-    layers.emplace_back(i, param_names, &h2kv_[i], &kv2h_[i]);
+    layers.push_back({i, &h2kv_[i], &kv2h_[i]});
   }
 
   std::vector<ChunkContext> chunks;
@@ -276,7 +283,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
     chunks.emplace_back(i, chunk_start, chunk_end, sin_chunk, cos_chunk);
   }
 
-  auto scheduler = std::make_unique<SimpleGridScheduler>(layers, chunks, state_, parameter_loader_);
+  auto scheduler = std::make_unique<SimpleGridScheduler>(layers, chunks, ctx);
 
   scheduler->initTasks();
 

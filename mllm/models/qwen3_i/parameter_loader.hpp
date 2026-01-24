@@ -5,6 +5,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "mllm/core/ParameterFile.hpp"
 #include "mllm/core/schema/ModelFileV2.hpp"
@@ -26,6 +27,11 @@ class ParameterLoader {
   void loadTensor(const std::string& name);
   [[nodiscard]] bool isLoaded(const std::string& name) const { return parameter_file_->has(name); }
 
+  // Layer-level interface
+  void registerLayer(int layer, std::vector<std::string> tensor_names);
+  void loadLayer(int layer);
+  [[nodiscard]] bool isLayerLoaded(int layer) const;
+
   ParameterFile::ptr_t getParameterFile() const { return parameter_file_; }
   void dumpTensorStatus() const;
 
@@ -37,6 +43,8 @@ class ParameterLoader {
   ParameterFile::ptr_t parameter_file_;
   ModelFileV2Descriptor header_;
   std::unordered_map<std::string, ModelFileV2ParamsDescriptor> descriptors_;
+  std::vector<std::vector<std::string>> layer_tensors_;
+  std::vector<bool> layer_loaded_;
 };
 
 }  // namespace mllm::models::qwen3_i

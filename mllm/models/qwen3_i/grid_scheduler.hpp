@@ -20,7 +20,6 @@ struct GridCell {
 
 struct LayerContext {
   int layer;
-  std::vector<std::string> param_names;
   H2KV* h2kv;
   KV2H* kv2h;
 };
@@ -35,8 +34,7 @@ struct ChunkContext {
 
 class GridScheduler {
  public:
-  GridScheduler(std::vector<LayerContext> layers, std::vector<ChunkContext> chunks,
-                GenerationState& state, ParameterLoader& parameter_loader);
+  GridScheduler(std::vector<LayerContext> layers, std::vector<ChunkContext> chunks, RuntimeContext& ctx);
   virtual ~GridScheduler() = default;
 
   void run();
@@ -74,8 +72,7 @@ class GridScheduler {
   std::vector<std::unique_ptr<LoadParamTask>> layer_param_tasks_;
   std::vector<std::vector<GridCell>> grid_;
 
-  GenerationState& state_;
-  ParameterLoader& parameter_loader_;
+  RuntimeContext& ctx_;
 };
 
 }  // namespace mllm::models::qwen3_i
