@@ -261,47 +261,25 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   auto seq_len = token_ids.shape()[1];
   auto num_chunks = static_cast<int>((seq_len + chunk_size_ - 1) / chunk_size_);
 
-  auto scheduler = std::make_unique<SimpleGridScheduler>(num_layers_, num_chunks, state_, parameter_loader_);
+  std::vector<LayerContext> layers;
+  for (int i = 0; i < num_layers_; ++i) {
+    auto param_names = collectLayerParamNames(i);
+    layers.emplace_back(i, param_names, h2kv_[i], kv2h_[i]);
+  }
 
-  // 1. Handle embedding for all chunks (outside grid)
-  for (int chunk = 0; chunk < num_chunks; ++chunk) {
-    int chunk_start = chunk * chunk_size_;
+  std::vector<ChunkContext> chunks;
+  for (int i = 0; i < num_chunks; ++i) {
+    int chunk_start = i * chunk_size_;
     int chunk_end = std::min(chunk_start + chunk_size_, seq_len);
-    int len = chunk_end - chunk_start;
-
-    int watermark = state_.getMinWatermark(chunk_start, len);
-    if (watermark < 0) {
-      // No checkpoint, compute embedding
-      auto x = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
-      state_.updateH({0, chunk_start, len}, x);
-    }
+    auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
+    auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
+    chunks.emplace_back(i, chunk_start, chunk_end, sin_chunk, cos_chunk);
   }
 
-  // 2. Set per-layer parameter loading tasks
-  for (int layer = 0; layer < num_layers_; ++layer) {
-    auto param_names = collectLayerParamNames(layer);
-    LoadParamTask load_param(layer, parameter_loader_, param_names, state_);
-    scheduler->initLayerParamTask(layer, std::move(load_param));
-  }
+  auto scheduler = std::make_unique<SimpleGridScheduler>(layers, chunks, state_, parameter_loader_);
 
-  // 3. Set per-cell tasks
-  for (int layer = 0; layer < num_layers_; ++layer) {
-    for (int chunk = 0; chunk < num_chunks; ++chunk) {
-      int chunk_start = chunk * chunk_size_;
-      int chunk_end = std::min(chunk_start + chunk_size_, seq_len);
-      int count = chunk_end - chunk_start;
-      CacheRange range{layer, chunk_start, count};
+  scheduler->initTasks();
 
-      // Extract sin/cos embeddings for this chunk
-      auto sin_chunk = sin_emb[{kAll, {chunk_start, chunk_end}, kAll}];
-      auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
-
-      GridCell cell(range, chunk, state_, h2kv_[layer], kv2h_[layer], sin_chunk, cos_chunk);
-      scheduler->initGridCell(layer, chunk, std::move(cell));
-    }
-  }
-
-  // 4. Execute all tasks
   scheduler->run();
 
   return norm_(state_.getH({num_layers_, 0, seq_len}));
