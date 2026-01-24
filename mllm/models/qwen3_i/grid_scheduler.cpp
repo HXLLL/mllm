@@ -14,9 +14,17 @@ GridScheduler::GridScheduler(std::vector<LayerContext> layers, std::vector<Chunk
       num_chunks_(chunks.size()),
       layers_(std::move(layers)),
       chunks_(std::move(chunks)),
-      grid_(num_layers_, std::vector<GridCell>(num_chunks_)),
+      grid_(num_layers_),
       state_(state),
-      parameter_loader_(parameter_loader) {}
+      parameter_loader_(parameter_loader) {
+    for (int i = 0; i < num_layers_; ++i) {
+      for (int j = 0; j < num_chunks_; ++j) {
+        auto& chunk = chunks_[j];
+        int count = chunk.end_pos - chunk.start_pos;
+        grid_[i].emplace_back(CellIndex{i, j, CacheRange{i, chunk.start_pos, count}});
+      }
+    }
+  }
 
 void GridScheduler::run() {
   while (!isDone()) {

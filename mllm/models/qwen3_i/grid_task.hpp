@@ -38,6 +38,7 @@ class Task {
   [[nodiscard]] virtual TaskType taskType() const = 0;
 
   [[nodiscard]] TaskStatus status() const { return status_; }
+  [[nodiscard]] bool isCompleted() const { return status_ == TaskStatus::kCompleted; }
 
  protected:
   void complete() { status_ = TaskStatus::kCompleted; MLLM_INFO("{} completed", name()); }

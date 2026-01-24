@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include "mllm/models/qwen3_i/grid_task.hpp"
@@ -41,11 +42,20 @@ class GridScheduler {
   void run();
   void initTasks();
 
- private:
+ protected:
   [[nodiscard]] virtual Task* selectNext() = 0;
   [[nodiscard]] virtual bool isDone() const = 0;
 
-  [[nodiscard]] bool isComputeReady(int layer, int chunk) const;
+  [[nodiscard]] int numLayers() const { return num_layers_; }
+  [[nodiscard]] int numChunks() const { return num_chunks_; }
+
+  LoadParamTask* getLayerParamTask(int layer) { return layer_param_tasks_[layer].get(); }
+  [[nodiscard]] const LoadParamTask* getLayerParamTask(int layer) const {
+    return layer_param_tasks_[layer].get();
+  }
+
+  GridCell& getCell(int layer, int chunk) { return grid_[layer][chunk]; }
+  [[nodiscard]] const GridCell& getCell(int layer, int chunk) const { return grid_[layer][chunk]; }
 
   /* layer tasks*/
   void addLayerParamTask(int layer);
@@ -55,6 +65,7 @@ class GridScheduler {
   void addLoadHTask(int layer, int chunk_id);
   void addComputeTask(int layer, int chunk_id);
 
+ private:
   const int num_layers_;
   const int num_chunks_;
 
