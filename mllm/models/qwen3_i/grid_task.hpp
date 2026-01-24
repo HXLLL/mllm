@@ -33,6 +33,7 @@ class Task {
   virtual ~Task() = default;
 
   virtual void execute() = 0;
+  [[nodiscard]] virtual bool isReady() const = 0;
   [[nodiscard]] virtual std::string name() const = 0;
   [[nodiscard]] virtual TaskType taskType() const = 0;
 
@@ -56,6 +57,7 @@ class LoadParamTask : public Task {
     return fmt::format("LoadParam[{}]", layer_);
   }
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
+  [[nodiscard]] bool isReady() const override { return true; }
 
  private:
   int layer_;
@@ -81,6 +83,8 @@ class LoadKVTask : public Task {
     return fmt::format("LoadKV[{}][{}]", idx_.layer, idx_.chunk_id);
   }
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
+  [[nodiscard]] bool isReady() const override { return true; }
+
  private:
   CellIndex idx_;
   GenerationState& state_;
@@ -96,6 +100,8 @@ class LoadHTask : public Task {
     return fmt::format("LoadH[{}][{}]", idx_.layer, idx_.chunk_id);
   }
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
+  [[nodiscard]] bool isReady() const override { return true; }
+
  private:
   CellIndex idx_;
   GenerationState& state_;
@@ -112,6 +118,10 @@ class ComputeTask : public Task {
     return fmt::format("Compute[{}][{}]", idx_.layer, idx_.chunk_id);
   }
   [[nodiscard]] TaskType taskType() const override { return TaskType::kCompute; }
+  [[nodiscard]] bool isReady() const override {
+    return state_.isParamLoaded(idx_.layer) && state_.isHLoaded(idx_.range)
+           && state_.isKVLoaded({idx_.layer, 0, idx_.range.offset});
+  }
 
  private:
   CellIndex idx_;
