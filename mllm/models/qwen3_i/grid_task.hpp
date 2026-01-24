@@ -41,8 +41,8 @@ class Task {
   [[nodiscard]] bool isCompleted() const { return status_ == TaskStatus::kCompleted; }
 
  protected:
-  void complete() { status_ = TaskStatus::kCompleted; MLLM_INFO("{} completed", name()); }
-  void fail() { status_ = TaskStatus::kFailed; MLLM_INFO("{} failed", name()); }
+  void complete() { status_ = TaskStatus::kCompleted; }
+  void fail() { status_ = TaskStatus::kFailed; }
 
   TaskStatus status_{TaskStatus::kPending};
 };
