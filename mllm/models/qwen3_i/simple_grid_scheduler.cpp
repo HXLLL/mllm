@@ -5,7 +5,7 @@
 
 namespace mllm::models::qwen3_i {
 
-GridTask* SimpleGridScheduler::selectNext() {
+Task* SimpleGridScheduler::selectNext() {
   // Check layer param tasks first
   for (int layer = 0; layer < num_layers_; ++layer) {
     auto& task = getLayerParamTask(layer);

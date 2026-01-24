@@ -13,7 +13,7 @@ class SimpleGridScheduler : public GridScheduler {
       : GridScheduler(num_layers, num_chunks, state, parameter_loader) {}
 
  protected:
-  GridTask* selectNext() override;
+  Task* selectNext() override;
   [[nodiscard]] bool isDone() const override;
 
  private:
