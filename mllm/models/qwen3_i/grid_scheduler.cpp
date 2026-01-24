@@ -42,8 +42,21 @@ void GridScheduler::run() {
   }
 }
 
-void initTasks() {
+void GridScheduler::initTasks() {
+  layer_param_tasks_.resize(num_layers_);
+  for (int layer = 0; layer < num_layers_; ++layer) {
+    addLayerParamTask(layer);
+  }
 
+  for (int layer = 0; layer < num_layers_; ++layer) {
+    for (int chunk = 0; chunk < num_chunks_; ++chunk) {
+      const auto& r = grid_[layer][chunk].idx.range;
+
+      addLoadKVTask(layer, chunk);
+      addLoadHTask(layer, chunk);
+      addComputeTask(layer, chunk);
+    }
+  }
 }
 
 void GridScheduler::addLayerParamTask(int layer) {

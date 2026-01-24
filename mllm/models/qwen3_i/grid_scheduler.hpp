@@ -40,7 +40,7 @@ class GridScheduler {
   virtual ~GridScheduler() = default;
 
   void run();
-  void initTasks();
+  virtual void initTasks();
 
  protected:
   [[nodiscard]] virtual Task* selectNext() = 0;
