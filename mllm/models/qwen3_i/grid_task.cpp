@@ -39,7 +39,7 @@ std::string LoadKVTask::name() const { return "LoadKV[" + std::to_string(ctx_.la
 
 // LoadHTask
 
-LoadHTask::LoadHTask(const GridContext& ctx) : Task(), ctx_(ctx) {}
+LoadHTask::LoadHTask(const CellContext& ctx) : Task(), ctx_(ctx) {}
 
 void LoadHTask::execute() {
   const auto& r = ctx_.range;
@@ -54,7 +54,7 @@ std::string LoadHTask::name() const {
 
 // ComputeTask
 
-ComputeTask::ComputeTask(const GridContext& ctx, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb,
+ComputeTask::ComputeTask(const CellContext& ctx, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb,
                          Tensor cos_emb)
     : Task(),
       ctx_(ctx),

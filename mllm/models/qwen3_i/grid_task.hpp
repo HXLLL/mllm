@@ -62,7 +62,7 @@ class LoadParamTask : public Task {
   GenerationState& state_;
 };
 
-struct GridContext {
+struct CellContext {
   int layer;
   int chunk_id;
   CacheRange range;
@@ -72,37 +72,37 @@ struct GridContext {
 // Load K/V cache from checkpoint
 class LoadKVTask : public Task {
  public:
-  explicit LoadKVTask(const GridContext& ctx);
+  explicit LoadKVTask(const CellContext& ctx);
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
  private:
-  GridContext ctx_;
+  CellContext ctx_;
 };
 
 // Load hidden state from checkpoint
 class LoadHTask : public Task {
  public:
-  explicit LoadHTask(const GridContext& ctx);
+  explicit LoadHTask(const CellContext& ctx);
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
  private:
-  GridContext ctx_;
+  CellContext ctx_;
 };
 
 // Compute: H2KV + KV2H
 class ComputeTask : public Task {
  public:
-  ComputeTask(const GridContext& ctx, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb, Tensor cos_emb);
+  ComputeTask(const CellContext& ctx, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb, Tensor cos_emb);
   void execute() override;
   [[nodiscard]] std::string name() const override;
   [[nodiscard]] TaskType taskType() const override { return TaskType::kCompute; }
 
  private:
-  GridContext ctx_;
+  CellContext ctx_;
   H2KV& h2kv_;
   KV2H& kv2h_;
   Tensor sin_emb_;
