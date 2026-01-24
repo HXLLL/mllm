@@ -10,54 +10,61 @@
 namespace mllm::models::qwen3_i {
 
 struct GridCell {
-  explicit GridCell(const CellContext& ctx) : ctx(ctx) {}
+  explicit GridCell(const CellIndex& idx) : idx(idx) {}
+  std::unique_ptr<LoadKVTask> load_kv;
+  std::unique_ptr<LoadHTask> load_h;
+  std::unique_ptr<ComputeTask> compute;
+  CellIndex idx;
+};
 
-  std::optional<LoadKVTask> load_kv;
-  std::optional<LoadHTask> load_h;
-  std::optional<ComputeTask> compute;
-  CellContext ctx;
+struct LayerContext {
+  int layer;
+  std::vector<std::string> param_names;
+  H2KV* h2kv;
+  KV2H* kv2h;
+};
+
+struct ChunkContext {
+  int chunk_id;
+  int start_pos;
+  int end_pos;
+  Tensor sin_emb;
+  Tensor cos_emb;
 };
 
 class GridScheduler {
  public:
-  GridScheduler(int num_layers, int seq_len, int chunk_size, GenerationState& state,
-                ParameterLoader& parameter_loader);
+  GridScheduler(std::vector<LayerContext> layers, std::vector<ChunkContext> chunks,
+                GenerationState& state, ParameterLoader& parameter_loader);
   virtual ~GridScheduler() = default;
 
+  void run();
+  void initTasks();
+
+ private:
+  [[nodiscard]] virtual Task* selectNext() = 0;
+  [[nodiscard]] virtual bool isDone() const = 0;
+
+  [[nodiscard]] bool isComputeReady(int layer, int chunk) const;
+
   /* layer tasks*/
-  void addLayerParamTask(int layer, const std::vector<std::string>& param_names);
+  void addLayerParamTask(int layer);
 
   /* cell tasks */
-  void initCellContext(int layer, int chunk_id, CacheRange range);
   void addLoadKVTask(int layer, int chunk_id);
   void addLoadHTask(int layer, int chunk_id);
   void addComputeTask(int layer, int chunk_id);
 
-  void run();
+  const int num_layers_;
+  const int num_chunks_;
 
- protected:
-  virtual void initTasks();
-  virtual Task* selectNext() = 0;
-  [[nodiscard]] virtual bool isDone() const = 0;
-
-  [[nodiscard]] bool isInitDone() const;
-  [[nodiscard]] bool isComputeReady(int layer, int chunk) const;
-
-  [[nodiscard]] GridCell& getCell(int layer, int chunk) { return grid_[layer][chunk]; }
-  [[nodiscard]] const GridCell& getCell(int layer, int chunk) const { return grid_[layer][chunk]; }
+  std::vector<LayerContext> layers_;
+  std::vector<ChunkContext> chunks_;
+  std::vector<std::unique_ptr<LoadParamTask>> layer_param_tasks_;
+  std::vector<std::vector<GridCell>> grid_;
 
   GenerationState& state_;
   ParameterLoader& parameter_loader_;
-  const int num_layers_;
-  const int seq_len_;
-  const int chunk_size_;
-  const int num_chunks_;
-
- private:
-  CellContext makeCellContext(int layer, int chunk_id, CacheRange range);
-
-  std::vector<std::optional<LoadParamTask>> layer_param_tasks_;
-  std::vector<std::vector<GridCell>> grid_;
 };
 
 }  // namespace mllm::models::qwen3_i

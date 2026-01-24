@@ -9,8 +9,7 @@ namespace mllm::models::qwen3_i {
 
 class SimpleGridScheduler : public GridScheduler {
  public:
-  SimpleGridScheduler(int num_layers, int num_chunks, GenerationState& state, ParameterLoader& parameter_loader)
-      : GridScheduler(num_layers, num_chunks, state, parameter_loader) {}
+  using GridScheduler::GridScheduler;
 
  protected:
   Task* selectNext() override;
