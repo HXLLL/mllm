@@ -27,11 +27,13 @@ std::string LoadParamTask::name() const { return "LoadParam[" + std::to_string(l
 
 // LoadKVTask
 
+LoadKVTask::LoadKVTask(const CellContext& ctx, GenerationState& state) : Task(), ctx_(ctx), state_(state) {}
+
 void LoadKVTask::execute() {
   const auto& r = ctx_.range;
-  MLLM_RT_ASSERT(!ctx_.state.isKVLoaded(r));
-  ctx_.state.loadLayerKCache(r);
-  ctx_.state.loadLayerVCache(r);
+  MLLM_RT_ASSERT(!state_.isKVLoaded(r));
+  state_.loadLayerKCache(r);
+  state_.loadLayerVCache(r);
   complete();
 }
 
@@ -39,12 +41,12 @@ std::string LoadKVTask::name() const { return "LoadKV[" + std::to_string(ctx_.la
 
 // LoadHTask
 
-LoadHTask::LoadHTask(const CellContext& ctx) : Task(), ctx_(ctx) {}
+LoadHTask::LoadHTask(const CellContext& ctx, GenerationState& state) : Task(), ctx_(ctx), state_(state) {}
 
 void LoadHTask::execute() {
   const auto& r = ctx_.range;
-  MLLM_RT_ASSERT(!ctx_.state.isHLoaded(r));
-  ctx_.state.loadLayerHCache(r); 
+  MLLM_RT_ASSERT(!state_.isHLoaded(r));
+  state_.loadLayerHCache(r);
   complete();
 }
 
@@ -54,10 +56,11 @@ std::string LoadHTask::name() const {
 
 // ComputeTask
 
-ComputeTask::ComputeTask(const CellContext& ctx, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb,
+ComputeTask::ComputeTask(const CellContext& ctx, GenerationState& state, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb,
                          Tensor cos_emb)
     : Task(),
       ctx_(ctx),
+      state_(state),
       h2kv_(h2kv),
       kv2h_(kv2h),
       sin_emb_(std::move(sin_emb)),
@@ -66,7 +69,7 @@ ComputeTask::ComputeTask(const CellContext& ctx, H2KV& h2kv, KV2H& kv2h, Tensor 
 void ComputeTask::execute() {
   const auto& r = ctx_.range;
 
-  Tensor x = ctx_.state.getH(r);
+  Tensor x = state_.getH(r);
 
   auto h2kv_result = h2kv_(x, sin_emb_, cos_emb_);
   auto& h = h2kv_result[0];
@@ -74,15 +77,15 @@ void ComputeTask::execute() {
   auto& k = h2kv_result[2];
   auto& v = h2kv_result[3];
 
-  ctx_.state.updateKV(r, k, v);
+  state_.updateKV(r, k, v);
 
   int offset = r.offset;
   Tensor x_out = kv2h_(h, q, k, AnyValue(offset))[0];
 
   CacheRange next_range{r.layer_idx + 1, r.offset, r.count};
-  ctx_.state.updateH(next_range, x_out);
+  state_.updateH(next_range, x_out);
 
-  ctx_.state.checkpoint();
+  state_.checkpoint();
   complete();
 }
 

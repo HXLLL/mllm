@@ -58,7 +58,7 @@ bool GridScheduler::isComputeReady(int layer, int chunk) const {
 }
 
 CellContext GridScheduler::makeCellContext(int layer, int chunk_id, CacheRange range) {
-  return CellContext{layer, chunk_id, range, state_};
+  return CellContext{layer, chunk_id, range};
 }
 
 }  // namespace mllm::models::qwen3_i

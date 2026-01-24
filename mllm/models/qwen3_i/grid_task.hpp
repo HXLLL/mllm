@@ -66,43 +66,46 @@ struct CellContext {
   int layer;
   int chunk_id;
   CacheRange range;
-  GenerationState& state;
 };
 
 // Load K/V cache from checkpoint
 class LoadKVTask : public Task {
  public:
-  explicit LoadKVTask(const CellContext& ctx);
+  LoadKVTask(const CellContext& ctx, GenerationState& state);
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
  private:
   CellContext ctx_;
+  GenerationState& state_;
 };
 
 // Load hidden state from checkpoint
 class LoadHTask : public Task {
  public:
-  explicit LoadHTask(const CellContext& ctx);
+  LoadHTask(const CellContext& ctx, GenerationState& state);
 
   void execute() override;
   [[nodiscard]] std::string name() const override;
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
  private:
   CellContext ctx_;
+  GenerationState& state_;
 };
 
 // Compute: H2KV + KV2H
 class ComputeTask : public Task {
  public:
-  ComputeTask(const CellContext& ctx, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb, Tensor cos_emb);
+  ComputeTask(const CellContext& ctx, GenerationState& state, H2KV& h2kv, KV2H& kv2h, Tensor sin_emb,
+              Tensor cos_emb);
   void execute() override;
   [[nodiscard]] std::string name() const override;
   [[nodiscard]] TaskType taskType() const override { return TaskType::kCompute; }
 
  private:
   CellContext ctx_;
+  GenerationState& state_;
   H2KV& h2kv_;
   KV2H& kv2h_;
   Tensor sin_emb_;
