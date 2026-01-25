@@ -7,6 +7,7 @@
 #include "mllm/models/qwen3_i/qwen3_events.hpp"
 #include "mllm/models/qwen3_i/runtime_context.hpp"
 #include "mllm/models/qwen3_i/simple_grid_scheduler.hpp"
+#include "mllm/models/qwen3_i/chunk_first_scheduler.hpp"
 #include "mllm/nn/Functional.hpp"
 #include "mllm/nn/Module.hpp"
 #include "mllm/utils/AnyValue.hpp"
@@ -289,7 +290,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
   }
 
 
-  auto scheduler = std::make_unique<SimpleGridScheduler>(layers, chunks, ctx);
+  auto scheduler = std::make_unique<ChunkFirstScheduler>(layers, chunks, ctx);
 
   scheduler->initTasks();
 
