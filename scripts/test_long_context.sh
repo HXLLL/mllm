@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: ./scripts/test_long_context.sh [1k|2k|4k|8k]
+# Usage: ./scripts/test_long_context.sh [1k|2k|4k|8k] [max_decode_tokens]
 
 # Drop caches
 /bin/sync
@@ -8,6 +8,7 @@ echo 3 | sudo tee /proc/sys/vm/drop_caches
 
 # Parameters
 CONTEXT_SIZE=${1:-1k}
+MDT=${2:-${MDT:-32}}
 CS=${CS:-32}
 MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
 LAZY_LOAD=${LAZY_LOAD:-true}
@@ -29,7 +30,7 @@ STATE_PATH="./data/state/${MODEL_TYPE}-${CS}"
 mkdir -p "${TRACE_FOLDER}"
 mkdir -p "${STATE_PATH}"
 
-rm -rf ${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}
+rm -rf "${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}"
 
 if [ "$DEBUG" ]; then
   APP="gdb --args ./build/bin/mllm-qwen3-runner"
@@ -46,6 +47,7 @@ CMD="${APP} \
   -i "${PROMPT_FILE}" \
   --state_path "${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}" \
   -cs "${CS}" \
+  -mdt "${MDT}" \
   -tf "${TRACE_FOLDER}/${CONTEXT_SIZE}.csv" \
   $([ "$LAZY_LOAD" = "true" ] && echo "-ll")"
 
