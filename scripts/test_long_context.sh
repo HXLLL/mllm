@@ -19,7 +19,7 @@ PROMPT_FILE="./scripts/prompts/prompt_${CONTEXT_SIZE}.txt"
 # Validate prompt file exists
 if [[ ! -f "${PROMPT_FILE}" ]]; then
     echo "Error: Prompt file not found: ${PROMPT_FILE}"
-    echo "Available: 1k, 2k, 4k, 8k"
+    echo "Available: 64, 1k, 2k, 4k, 8k"
     exit 1
 fi
 
