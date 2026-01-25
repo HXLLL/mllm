@@ -35,7 +35,7 @@ void GridScheduler::run() {
       continue;
     }
     task->execute();
-    MLLM_INFO("Task completed: {}, status: {}", task->name(), task->status());
+    MLLM_INFO("Task completed: {}, status: {}", task->name(), toString(task->status()));
   }
 }
 
