@@ -19,11 +19,28 @@ enum class TaskType {
   kCompute,
 };
 
+inline const char* toString(TaskType type) {
+  switch (type) {
+    case TaskType::kIO: return "IO";
+    case TaskType::kCompute: return "Compute";
+  }
+  return "Unknown";
+}
+
 enum class TaskStatus {
   kPending,
   kCompleted,
   kFailed
 };
+
+inline const char* toString(TaskStatus status) {
+  switch (status) {
+    case TaskStatus::kPending: return "Pending";
+    case TaskStatus::kCompleted: return "Completed";
+    case TaskStatus::kFailed: return "Failed";
+  }
+  return "Unknown";
+}
 
 class Task {
  public:

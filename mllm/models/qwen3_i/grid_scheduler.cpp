@@ -34,7 +34,6 @@ void GridScheduler::run() {
       MLLM_ERROR_EXIT(ExitCode::kCoreError, "Task is not ready: {}", task->name());
       continue;
     }
-    MLLM_INFO("Executing task: {}", task->name());
     task->execute();
     MLLM_INFO("Task completed: {}, status: {}", task->name(), task->status());
   }
@@ -50,8 +49,6 @@ void GridScheduler::initTasks() {
     for (int chunk = 0; chunk < num_chunks_; ++chunk) {
       const auto& r = grid_[layer][chunk].idx.range;
 
-      addLoadKVTask(layer, chunk);
-      addLoadHTask(layer, chunk);
       addComputeTask(layer, chunk);
     }
   }
