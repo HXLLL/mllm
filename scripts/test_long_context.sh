@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage: ./scripts/test_long_context.sh [1k|2k|4k|8k] [max_decode_tokens]
-# Environment variables: CLEAN_STATE (default: true), MDT, CS, MODEL_TYPE, LAZY_LOAD
+# Environment variables: CLEAN_STATE (default: true), MDT, CS, MODEL_TYPE, LAZY_LOAD, DEBUG, PROFILE
 
 # Drop caches
 /bin/sync
@@ -40,6 +40,10 @@ fi
 
 if [ "$DEBUG" ]; then
   APP="gdb --args ./build/bin/mllm-qwen3-runner"
+elif [ "$PROFILE" ]; then
+  PERF_OUTPUT="${TRACE_FOLDER}/${CONTEXT_SIZE}.perf.data"
+  echo "Profiling to ${PERF_OUTPUT}"
+  APP="sudo perf record -o ${PERF_OUTPUT} -- ./build/bin/mllm-qwen3-runner"
 else
   APP="./build/bin/mllm-qwen3-runner"
 fi
