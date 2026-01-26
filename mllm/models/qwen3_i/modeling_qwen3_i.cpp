@@ -180,7 +180,6 @@ void KV2H::load(const ParameterFile::ptr_t &param_file) {
 std::vector<Tensor> KV2H::forward(const std::vector<Tensor>& inputs, const std::vector<AnyValue>& args) {
   const auto& hidden_states = inputs[0];
   auto query = inputs[1].clone();
-  const auto& key = inputs[2];
   int offset = args[0].get<int>();
   const int count = hidden_states.shape()[1];
 
@@ -321,7 +320,7 @@ Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const 
     auto& k = h2kv_result[2];
     auto& v = h2kv_result[3];
     state_.updateKV({static_cast<int>(j), token_idx, 1}, k, v);
-    x = kv2h_[j](h, q, k, AnyValue(token_idx))[0];
+    x = kv2h_[j](h, q, AnyValue(token_idx))[0];
     recordEvent<LayerCompleteEvent>(j, 1, token_idx);
     state_.updateH({static_cast<int>(j + 1), token_idx, 1}, x);
   }

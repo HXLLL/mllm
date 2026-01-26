@@ -53,7 +53,7 @@ void ComputeTask::execute() {
 
   state.updateKV(r, k, v);
 
-  Tensor x_out = kv2h_(h, q, k, AnyValue(r.offset))[0];
+  Tensor x_out = kv2h_(h, q, AnyValue(r.offset))[0];
 
   CacheRange next_range{r.layer_idx + 1, r.offset, r.count};
   state.updateH(next_range, x_out);
