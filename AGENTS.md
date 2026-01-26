@@ -8,11 +8,14 @@ Guidance for coding agents operating in this repo. Defer to CLAUDE.md if conflic
 
 **Main files**:
 - `mllm/mllm/models/qwen3_i/` - Model with state persistence and task-based scheduler
-  - `grid_scheduler.hpp/cpp` - Task-based scheduler (see `docs/task.md` for architecture)
+  - `grid_scheduler.hpp/cpp` - Base scheduler class
+  - `chunk_first_scheduler.hpp/cpp` - Chunk-first scheduling strategy
+  - `layer_first_scheduler.hpp/cpp` - Layer-first scheduling strategy
   - `grid_task.hpp/cpp` - Task definitions (LoadParam, LoadKV, LoadH, Compute)
   - `generation_state.hpp/cpp` - State persistence with watermark mechanism
   - `modeling_qwen3_i.hpp/cpp` - Model implementation using scheduler
 - `examples/qwen3/main.cpp` - Test application
+- `examples/qwen3/dump_state.cpp` - State inspection tool
 
 ## Commands
 
@@ -27,6 +30,12 @@ Simple generation test:
 ./scripts/test_simple_generation.sh
 ```
 
+Long context test:
+```bash
+./scripts/test_long_context.sh [1k|2k|4k|8k] [max_decode_tokens]
+# Environment: CLEAN_STATE (default: true), MDT, CS, MODEL_TYPE, LAZY_LOAD
+```
+
 Manual test with recovery validation:
 ```bash
 ./build/bin/mllm-qwen3-runner \
@@ -37,9 +46,14 @@ Manual test with recovery validation:
 ```
 Use Ctrl-C to simulate power loss, then rerun. Second run should skip already-completed prefill.
 
+Inspect state:
+```bash
+./build/bin/mllm-dump-state <state_path>
+```
+
 Options:
 - `-cs N`: Chunk size (default: 32)
-- `-mdt N`: Max decode tokens, 0 for unlimited (default in script: 32)
+- `-mdt N`: Max decode tokens, 0 for unlimited (default: 32)
 - `-ie`: Ignore EOS token
 
 ## Coding Style Preferences
