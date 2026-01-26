@@ -13,3 +13,7 @@ target_compile_options(mllm-qwen3-runner PRIVATE
     "-Wmissing-declarations"
     "-Wsuggest-override"
 )
+
+add_executable(mllm-dump-state dump_state.cpp)
+target_link_libraries(mllm-dump-state PRIVATE fmt::fmt)
+target_include_directories(mllm-dump-state PRIVATE ${MLLM_INCLUDE_DIR} ${MLLM_JSON_INCLUDE_DIR})

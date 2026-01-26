@@ -18,5 +18,5 @@ Tasks:
         - "-DMLLM_ENABLE_TOOLS=ON"
   - CMakeBuildTask:
       cmake_cfg_path: "build"
-      targets: [ "mllm-qwen3-runner" ]
+      targets: [ "mllm-qwen3-runner", "mllm-dump-state" ]
 
