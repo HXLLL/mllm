@@ -32,8 +32,10 @@ STATE_PATH="./data/state/${MODEL_TYPE}-${CS}"
 mkdir -p "${TRACE_FOLDER}"
 mkdir -p "${STATE_PATH}"
 
-if [ "$CLEAN_STATE" ]; then
+if [ "$CLEAN_STATE" = "true" ]; then
+  set -x
   rm -rf "${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}"
+  set +x
 fi
 
 if [ "$DEBUG" ]; then
