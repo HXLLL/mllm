@@ -241,6 +241,7 @@ void GenerationState::initWatermark() {
 }
 
 void GenerationState::loadWatermark() {
+  layer_watermark_.resize(max_length_);
   watermark_file_.pread(layer_watermark_.data(), max_length_, 0);
   last_saved_watermark_ = layer_watermark_;
 }

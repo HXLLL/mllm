@@ -71,7 +71,7 @@ class GenerationState {
 
  private:
   const size_t ELEMENT_SIZE = bytesOfType(kFloat32) / lanesOfType(kFloat32);
-  constexpr static size_t MAX_METADATA_FILE_SIZE = 1024 * 4; // 4KB
+  constexpr static size_t MAX_METADATA_FILE_SIZE = 1024 * 128; // 128KB
 
   /* metadata management */
   void initMetadata(const Qwen3Config& cfg);
