@@ -37,8 +37,9 @@ class GenerationState {
 
   /* state machine transitions */
   void startPrefill(const Tensor& token_ids);
-  void startDecode(const Tensor& token_id);
+  void startDecode();
   [[nodiscard]] bool hasStarted() const { return phase_ != GenerationPhase::kInit; }
+  [[nodiscard]] bool isPrefillDone() const { return phase_ == GenerationPhase::kDecode; }
   [[nodiscard]] GenerationPhase getPhase() const { return phase_; }
 
   /* getter for metadata */

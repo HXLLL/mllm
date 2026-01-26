@@ -110,8 +110,7 @@ void GenerationState::startPrefill(const Tensor& token_ids) {
   phase_ = GenerationPhase::kPrefill;
 }
 
-void GenerationState::startDecode(const Tensor& token_id) {
-  MLLM_RT_ASSERT(token_id.shape() == std::vector<int32_t>({1, 1}) && token_id.dtype() == kInt64);
+void GenerationState::startDecode() {
   phase_ = GenerationPhase::kDecode;
 }
 

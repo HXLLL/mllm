@@ -264,6 +264,10 @@ std::vector<Tensor> Qwen3Text::forward(const std::vector<Tensor>& inputs, const 
 }
 
 Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb) {
+  if (!state_.hasStarted()) {
+    state_.startPrefill(token_ids);
+  }
+
   auto seq_len = token_ids.shape()[1];
   auto num_chunks = static_cast<int>((seq_len + chunk_size_ - 1) / chunk_size_);
 
@@ -300,6 +304,10 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
 }
 
 Tensor Qwen3Text::decode_(const Tensor& token_ids, const Tensor& sin_emb, const Tensor& cos_emb, int token_idx) {
+  if (!state_.isPrefillDone()) {
+    state_.startDecode();
+  }
+
   if (state_.isPositionComplete(token_idx)) { return norm_(state_.getH({static_cast<int>(num_layers_), token_idx, 1})); }
 
   MLLM_RT_ASSERT_EQ(token_ids.shape()[1], 1);
