@@ -26,7 +26,7 @@ Task* LayerFirstScheduler::selectNextParamTask() {
 }
 
 Task* LayerFirstScheduler::selectNextComputeTask() {
-  for (; current_layer_ < numLayers(); ++current_layer_, current_chunk_ = 0) {
+  for (; current_layer_ <= numLayers(); ++current_layer_, current_chunk_ = 0) {
     for (; current_chunk_ < numChunks(); ++current_chunk_) {
       auto& cell = getCell(current_layer_, current_chunk_);
 

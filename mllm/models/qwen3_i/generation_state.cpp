@@ -83,7 +83,6 @@ void GenerationState::checkpoint() {
   for (int layer = 0; layer <= layer_nums_; ++layer) { 
     count += writeHCacheLayer(h_cache_file_, layer); 
   }
-  MLLM_INFO("CheckpointHCacheWriteEvent: count = {}", count);
   tracer->record<CheckpointHCacheWriteEvent>();
 
   for (int layer = 0; layer < layer_nums_; ++layer) {
@@ -122,7 +121,10 @@ int GenerationState::getMinWatermark(int offset, int count) const {
   return min_layer;
 }
 
-bool GenerationState::isPositionComplete(int pos) const { return layer_watermark_[pos] == layer_nums_; }
+bool GenerationState::isPositionComplete(int pos) const {
+  return isHLoaded({layer_nums_, pos, 1});
+  // return layer_watermark_[pos] == layer_nums_;
+}
 
 void GenerationState::loadLayerKCache(const CacheRange& range) {
   loadLayerKVCacheImpl(k_cache_file_, k_cache_, k_loaded_, range);

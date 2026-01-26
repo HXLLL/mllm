@@ -12,9 +12,9 @@ GridScheduler::GridScheduler(std::vector<LayerContext> layers, std::vector<Chunk
       num_chunks_(chunks.size()),
       layers_(std::move(layers)),
       chunks_(std::move(chunks)),
-      grid_(num_layers_),
+      grid_(num_layers_ + 1),
       ctx_(ctx) {
-    for (int i = 0; i < num_layers_; ++i) {
+    for (int i = 0; i <= num_layers_; ++i) {
       for (int j = 0; j < num_chunks_; ++j) {
         auto& chunk = chunks_[j];
         int count = chunk.end_pos - chunk.start_pos;
@@ -53,20 +53,18 @@ void GridScheduler::initTasks() {
   for (int chunk = 0; chunk < num_chunks_; ++chunk) {
     int min_wm = chunk_min_wm[chunk];
 
-    // chunk 完全完成，不需要任何计算
-    if (min_wm >= num_layers_) continue;
-
-    // 第一个需要计算的 layer（min_wm=-1 时从 0 开始）
-    int first_compute = std::max(0, min_wm);
-
-    // 如果 min_wm >= 0 且该 H 还未加载，需要 LoadH 来加载该层的输入
-    if (min_wm >= 0) {
+    if (min_wm >= 1) {
       auto& c = chunks_[chunk];
       CacheRange h_range{min_wm, c.start_pos, c.end_pos - c.start_pos};
       if (!ctx_.state().isHLoaded(h_range)) {
         addLoadHTask(min_wm, chunk);
       }
     }
+
+    if (min_wm >= num_layers_) continue;
+
+    // 第一个需要计算的 layer（min_wm=-1 时从 0 开始）
+    int first_compute = std::max(0, min_wm);
 
     // 添加 compute tasks
     for (int layer = first_compute; layer < num_layers_; ++layer) {
