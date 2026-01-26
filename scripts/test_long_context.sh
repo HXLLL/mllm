@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Usage: ./scripts/test_long_context.sh [1k|2k|4k|8k] [max_decode_tokens]
+# Environment variables: CLEAN_STATE (default: true), MDT, CS, MODEL_TYPE, LAZY_LOAD
 
 # Drop caches
 /bin/sync
@@ -12,6 +13,7 @@ MDT=${2:-${MDT:-32}}
 CS=${CS:-32}
 MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
 LAZY_LOAD=${LAZY_LOAD:-true}
+CLEAN_STATE=${CLEAN_STATE:-true}
 
 # Paths
 MODEL_BASE="/home/xiaolong/llms/${MODEL_TYPE}"
@@ -30,7 +32,9 @@ STATE_PATH="./data/state/${MODEL_TYPE}-${CS}"
 mkdir -p "${TRACE_FOLDER}"
 mkdir -p "${STATE_PATH}"
 
-rm -rf "${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}"
+if [ "$CLEAN_STATE" ]; then
+  rm -rf "${STATE_PATH}/qwen3-runner-${CONTEXT_SIZE}"
+fi
 
 if [ "$DEBUG" ]; then
   APP="gdb --args ./build/bin/mllm-qwen3-runner"
