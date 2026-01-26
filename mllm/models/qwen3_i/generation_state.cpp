@@ -205,7 +205,7 @@ void GenerationState::loadMetadata() {
   std::array<char, MAX_METADATA_FILE_SIZE> json_str;
   auto metadata_file = FileDescriptor(path_ / "metadata.json");
   metadata_file.read(json_str.data(), MAX_METADATA_FILE_SIZE);
-  nlohmann::json json_obj(json_str);
+  nlohmann::json json_obj = nlohmann::json::parse(json_str.data());
 
   max_length_ = json_obj.at("max_length");
   layer_nums_ = json_obj.at("layer_nums");
