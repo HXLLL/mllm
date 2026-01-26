@@ -78,13 +78,11 @@ class Qwen3Service {
     mllm::Timer load_model_timer;
     if (config_.lazy_load) {
       parameter_loader_.lazyLoad();
-      parameter_loader_.dumpTensorStatus();
       model_.loadMinimalParams();
     } else {
       parameter_loader_.load();
       model_.loadAllParams();
     }
-    parameter_loader_.dumpTensorStatus();
     mllm::Context::instance().tracer()->record<mllm::models::qwen3_i::ModelLoadCompleteEvent>();
     fmt::print("Model loaded in {}ms\n", load_model_timer.elapsed_ms());
   }

@@ -83,6 +83,7 @@ void GenerationState::checkpoint() {
   for (int layer = 0; layer <= layer_nums_; ++layer) { 
     count += writeHCacheLayer(h_cache_file_, layer); 
   }
+  MLLM_INFO("CheckpointHCacheWriteEvent: count = {}", count);
   tracer->record<CheckpointHCacheWriteEvent>();
 
   for (int layer = 0; layer < layer_nums_; ++layer) {
@@ -246,6 +247,7 @@ void GenerationState::loadWatermark() {
 
 void GenerationState::saveWatermark() {
   watermark_file_.pwrite(layer_watermark_.data(), max_length_, 0);
+  // Debug: dump layer_watermark_ to log
   watermark_file_.fsync();
   last_saved_watermark_ = layer_watermark_;
 }

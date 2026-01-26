@@ -29,7 +29,6 @@ Task* ChunkFirstScheduler::selectNextComputeTask() {
   for (; current_chunk_ < numChunks(); ++current_chunk_, current_layer_ = 0) {
     for (; current_layer_ < numLayers(); ++current_layer_) {
       auto& cell = getCell(current_layer_, current_chunk_);
-
       if (cell.load_kv && !cell.load_kv->isCompleted()) { return cell.load_kv.get(); }
       if (cell.load_h && !cell.load_h->isCompleted()) { return cell.load_h.get(); }
       if (cell.compute && !cell.compute->isCompleted() && cell.compute->isReady()) {
