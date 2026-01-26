@@ -40,16 +40,58 @@ void GridScheduler::run() {
 }
 
 void GridScheduler::initTasks() {
-  layer_param_tasks_.resize(num_layers_);
-  for (int layer = 0; layer < num_layers_; ++layer) {
-    addLayerParamTask(layer);
+  // 1. 计算每个 chunk 的 min_watermark，确定边界
+  std::vector<int> chunk_min_wm(num_chunks_);
+  for (int chunk = 0; chunk < num_chunks_; ++chunk) {
+    auto& c = chunks_[chunk];
+    chunk_min_wm[chunk] = ctx_.state().getMinWatermark(c.start_pos, c.end_pos - c.start_pos);
   }
 
-  for (int layer = 0; layer < num_layers_; ++layer) {
-    for (int chunk = 0; chunk < num_chunks_; ++chunk) {
-      const auto& r = grid_[layer][chunk].idx.range;
+  // 2. 为需要计算的 cell 创建任务
+  std::vector<bool> layer_needs_compute(num_layers_, false);
 
+  for (int chunk = 0; chunk < num_chunks_; ++chunk) {
+    int min_wm = chunk_min_wm[chunk];
+
+    // chunk 完全完成，不需要任何计算
+    if (min_wm >= num_layers_) continue;
+
+    // 第一个需要计算的 layer（min_wm=-1 时从 0 开始）
+    int first_compute = std::max(0, min_wm);
+
+    // 如果 min_wm >= 0 且该 H 还未加载，需要 LoadH 来加载该层的输入
+    if (min_wm >= 0) {
+      auto& c = chunks_[chunk];
+      CacheRange h_range{min_wm, c.start_pos, c.end_pos - c.start_pos};
+      if (!ctx_.state().isHLoaded(h_range)) {
+        addLoadHTask(min_wm, chunk);
+      }
+    }
+
+    // 添加 compute tasks
+    for (int layer = first_compute; layer < num_layers_; ++layer) {
       addComputeTask(layer, chunk);
+      layer_needs_compute[layer] = true;
+    }
+  }
+
+  // 3. LoadKV：对于每个需要计算的 layer，已完成的 chunk 需要从文件加载 KV
+  for (int layer = 0; layer < num_layers_; ++layer) {
+    if (!layer_needs_compute[layer]) continue;
+
+    for (int chunk = 0; chunk < num_chunks_; ++chunk) {
+      // chunk 在该 layer 已完成（watermark > layer）
+      if (chunk_min_wm[chunk] > layer) {
+        addLoadKVTask(layer, chunk);
+      }
+    }
+  }
+
+  // 4. 只为需要计算的 layer 创建 LoadParamTask
+  layer_param_tasks_.resize(num_layers_);
+  for (int layer = 0; layer < num_layers_; ++layer) {
+    if (layer_needs_compute[layer]) {
+      addLayerParamTask(layer);
     }
   }
 }
