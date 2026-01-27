@@ -45,7 +45,7 @@ elif [ "$PROFILE" ]; then
   PERF=perf
   PERF_OUTPUT="${TRACE_FOLDER}/${CONTEXT_SIZE}.perf.data"
   echo "Profiling to ${PERF_OUTPUT}"
-  APP="sudo ${PERF} record -g -o ${PERF_OUTPUT} -- ./build/bin/mllm-qwen3-runner"
+  APP="sudo ${PERF} record -e cpu-clock -g -o ${PERF_OUTPUT} -- ./build/bin/mllm-qwen3-runner"
 else
   APP="./build/bin/mllm-qwen3-runner"
 fi
