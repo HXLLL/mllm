@@ -129,6 +129,59 @@ struct ModelLoadCompleteEvent final : MetaEvent<ModelLoadCompleteEvent> {
   static constexpr const char* kTypeName = "ModelLoadComplete";
 };
 
+// Task profiling events
+template<typename Derived>
+class TaskEvent : public Event {
+ public:
+  TaskEvent(int layer, int chunk) : layer_(layer), chunk_(chunk) {}
+
+  [[nodiscard]] std::map<std::string, std::string> toData() const override {
+    return {{"layer", std::to_string(layer_)}, {"chunk", std::to_string(chunk_)}};
+  }
+
+  [[nodiscard]] const char* typeName() const noexcept override { return Derived::kTypeName; }
+
+ private:
+  int layer_;
+  int chunk_;
+};
+
+struct LoadParamBeginEvent final : TaskEvent<LoadParamBeginEvent> {
+  using TaskEvent::TaskEvent;
+  static constexpr const char* kTypeName = "LoadParamBegin";
+};
+struct LoadParamCompleteEvent final : TaskEvent<LoadParamCompleteEvent> {
+  using TaskEvent::TaskEvent;
+  static constexpr const char* kTypeName = "LoadParamComplete";
+};
+
+struct LoadKVBeginEvent final : TaskEvent<LoadKVBeginEvent> {
+  using TaskEvent::TaskEvent;
+  static constexpr const char* kTypeName = "LoadKVBegin";
+};
+struct LoadKVCompleteEvent final : TaskEvent<LoadKVCompleteEvent> {
+  using TaskEvent::TaskEvent;
+  static constexpr const char* kTypeName = "LoadKVComplete";
+};
+
+struct LoadHBeginEvent final : TaskEvent<LoadHBeginEvent> {
+  using TaskEvent::TaskEvent;
+  static constexpr const char* kTypeName = "LoadHBegin";
+};
+struct LoadHCompleteEvent final : TaskEvent<LoadHCompleteEvent> {
+  using TaskEvent::TaskEvent;
+  static constexpr const char* kTypeName = "LoadHComplete";
+};
+
+struct ComputeBeginEvent final : TaskEvent<ComputeBeginEvent> {
+  using TaskEvent::TaskEvent;
+  static constexpr const char* kTypeName = "ComputeBegin";
+};
+struct ComputeCompleteEvent final : TaskEvent<ComputeCompleteEvent> {
+  using TaskEvent::TaskEvent;
+  static constexpr const char* kTypeName = "ComputeComplete";
+};
+
 template<typename EventType>
 static inline void recordEvent(int layer_idx, int seq_len, int token_idx) {
   Context::instance().tracer()->record<EventType>(layer_idx, seq_len, token_idx);
