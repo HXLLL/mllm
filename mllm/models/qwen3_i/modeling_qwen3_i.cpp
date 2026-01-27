@@ -286,7 +286,7 @@ Tensor Qwen3Text::prefill_(const Tensor& token_ids, const Tensor& sin_emb, const
     auto cos_chunk = cos_emb[{kAll, {chunk_start, chunk_end}, kAll}];
     chunks.emplace_back(i, chunk_start, chunk_end, sin_chunk, cos_chunk);
 
-    if (state_.getMinWatermark(chunk_start, chunk_end - chunk_start) < 0) {
+    if (state_.getMinWatermark(chunk_start, chunk_end - chunk_start) <= 0) {
       auto h0 = embedding_(token_ids[{kAll, {chunk_start, chunk_end}}]);
       state_.updateH({0, chunk_start, chunk_end - chunk_start}, h0);
     }
