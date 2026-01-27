@@ -41,15 +41,16 @@ fi
 if [ "$DEBUG" ]; then
   APP="gdb --args ./build/bin/mllm-qwen3-runner"
 elif [ "$PROFILE" ]; then
+  # PERF=/usr/lib/linux-tools/5.15.0-1032-nvidia-tegra/perf
+  PERF=perf
   PERF_OUTPUT="${TRACE_FOLDER}/${CONTEXT_SIZE}.perf.data"
   echo "Profiling to ${PERF_OUTPUT}"
-  APP="sudo perf record -o ${PERF_OUTPUT} -- ./build/bin/mllm-qwen3-runner"
+  APP="sudo ${PERF} record -g -o ${PERF_OUTPUT} -- ./build/bin/mllm-qwen3-runner"
 else
   APP="./build/bin/mllm-qwen3-runner"
 fi
 
 # Run
-CMD=
 CMD="${APP} \
   -m "${MODEL_BASE}/model.mllm" \
   -c "${MODEL_BASE}/config.json" \
