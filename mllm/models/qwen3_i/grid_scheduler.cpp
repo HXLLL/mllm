@@ -75,8 +75,6 @@ void GridScheduler::initTasks() {
 
   // 3. LoadKV：对于每个需要计算的 layer，已完成的 chunk 需要从文件加载 KV
   for (int layer = 0; layer < num_layers_; ++layer) {
-    if (!layer_needs_compute[layer]) continue;
-
     for (int chunk = 0; chunk < num_chunks_; ++chunk) {
       // chunk 在该 layer 已完成（watermark > layer）
       if (chunk_min_wm[chunk] > layer) {
@@ -85,12 +83,13 @@ void GridScheduler::initTasks() {
     }
   }
 
-  // 4. 只为需要计算的 layer 创建 LoadParamTask
+  //// 4. 只为需要计算的 layer 创建 LoadParamTask
+  // 为所有 layer 创建 LoadParamTask
   layer_param_tasks_.resize(num_layers_);
   for (int layer = 0; layer < num_layers_; ++layer) {
-    if (layer_needs_compute[layer]) {
-      addLayerParamTask(layer);
-    }
+    // if (layer_needs_compute[layer]) {
+    addLayerParamTask(layer);
+    // }
   }
 }
 
