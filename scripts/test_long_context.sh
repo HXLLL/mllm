@@ -11,7 +11,7 @@ echo 3 | sudo tee /proc/sys/vm/drop_caches
 CONTEXT_SIZE=${1:-1k}
 MDT=${2:-${MDT:-32}}
 CS=${CS:-32}
-MODEL_TYPE=${MODEL_TYPE:-Qwen3-0.6B}
+MODEL_TYPE=${MODEL_TYPE:-Qwen3-4B}
 LAZY_LOAD=${LAZY_LOAD:-true}
 CLEAN_STATE=${CLEAN_STATE:-true}
 
