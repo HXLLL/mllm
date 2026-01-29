@@ -11,8 +11,18 @@ namespace mllm::models::qwen3_i {
 
 namespace fs = std::filesystem;
 
-GenerationState::GenerationState(const fs::path& path)
-    : path_(path) {}
+GenerationState::GenerationState(const fs::path& path) : path_(path) {
+  fsync_worker_ = std::thread(&GenerationState::fsyncWorkerLoop, this);
+}
+
+GenerationState::~GenerationState() {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stop_fsync_worker_ = true;
+  }
+  fsync_cv_.notify_one();
+  if (fsync_worker_.joinable()) { fsync_worker_.join(); }
+}
 
 void GenerationState::create(const Qwen3Config& cfg) {
   initMetadata(cfg);
@@ -377,10 +387,235 @@ void GenerationState::openFiles() {
   size_t max_io_size = static_cast<size_t>(max_length_) * hidden_size_ * ELEMENT_SIZE;
   size_t buffer_size = std::max(max_io_size, static_cast<size_t>(1024 * 1024));  // At least 1MB
 
-  k_cache_file_ = File(path_ / "k_cache.bin", buffer_size);
-  v_cache_file_ = File(path_ / "v_cache.bin", buffer_size);
-  h_cache_file_ = File(path_ / "h_cache.bin", buffer_size);
-  watermark_file_ = File(path_ / "layer_watermark.bin", alignUp(max_length_, kDirectIOAlignment));
+  k_cache_file_ = SyncFile(path_ / "k_cache.bin", buffer_size);
+  v_cache_file_ = SyncFile(path_ / "v_cache.bin", buffer_size);
+  h_cache_file_ = SyncFile(path_ / "h_cache.bin", buffer_size);
+  watermark_file_ =
+      SyncFile(path_ / "layer_watermark.bin", alignUp(max_length_, kDirectIOAlignment));
+}
+
+void GenerationState::openAsyncFiles() {
+  size_t max_io_size = static_cast<size_t>(max_length_) * hidden_size_ * ELEMENT_SIZE;
+  size_t buffer_size = std::max(max_io_size, static_cast<size_t>(1024 * 1024));
+
+  async_k_file_ =
+      std::make_unique<AsyncFile>(path_ / "k_cache.bin", kDefaultMaxInflight, buffer_size);
+  async_v_file_ =
+      std::make_unique<AsyncFile>(path_ / "v_cache.bin", kDefaultMaxInflight, buffer_size);
+  async_h_file_ =
+      std::make_unique<AsyncFile>(path_ / "h_cache.bin", kDefaultMaxInflight, buffer_size);
+}
+
+void GenerationState::fsyncWorkerLoop() {
+  while (true) {
+    PendingFsync fsync_task;
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      fsync_cv_.wait(lock, [this] { return stop_fsync_worker_ || !pending_fsyncs_.empty(); });
+      if (stop_fsync_worker_ && pending_fsyncs_.empty()) { return; }
+      fsync_task = std::move(pending_fsyncs_.back());
+      pending_fsyncs_.pop_back();
+    }
+
+    bool success = true;
+    switch (fsync_task.type) {
+      case StateIOType::kFsyncK:
+        if (async_k_file_) { async_k_file_->fdatasync(); }
+        break;
+      case StateIOType::kFsyncV:
+        if (async_v_file_) { async_v_file_->fdatasync(); }
+        break;
+      case StateIOType::kFsyncH:
+        if (async_h_file_) { async_h_file_->fdatasync(); }
+        break;
+      case StateIOType::kFsyncWatermark: watermark_file_.fsync(); break;
+      default: success = false; break;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      completed_ios_.push_back({fsync_task.type, fsync_task.range, success});
+      --inflight_count_;
+    }
+
+    if (fsync_task.callback) { fsync_task.callback(fsync_task.type, fsync_task.range, success); }
+  }
+}
+
+bool GenerationState::submitLoadK(const CacheRange& range, StateIOCallback callback) {
+  if (!async_k_file_ || !async_k_file_->hasCapacity()) { return false; }
+
+  size_t entry_size = kv_dim_ * ELEMENT_SIZE;
+  size_t head_stride = max_length_ * entry_size;
+  size_t layer_stride = q_heads_ * head_stride;
+
+  for (int h = 0; h < q_heads_; ++h) {
+    size_t file_offset =
+        range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
+    auto ptr = k_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h, range.offset, 0});
+    auto req_id = async_k_file_->submitRead(ptr, range.count * entry_size, file_offset);
+    if (req_id == 0) { return false; }
+  }
+
+  ++inflight_count_;
+  (void)callback;
+  return true;
+}
+
+bool GenerationState::submitLoadV(const CacheRange& range, StateIOCallback callback) {
+  (void)callback;
+  if (!async_v_file_ || !async_v_file_->hasCapacity()) { return false; }
+
+  size_t entry_size = kv_dim_ * ELEMENT_SIZE;
+  size_t head_stride = max_length_ * entry_size;
+  size_t layer_stride = q_heads_ * head_stride;
+
+  for (int h = 0; h < q_heads_; ++h) {
+    size_t file_offset =
+        range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
+    auto ptr = v_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h, range.offset, 0});
+    auto req_id = async_v_file_->submitRead(ptr, range.count * entry_size, file_offset);
+    if (req_id == 0) { return false; }
+  }
+
+  ++inflight_count_;
+  return true;
+}
+
+bool GenerationState::submitLoadH(const CacheRange& range, StateIOCallback callback) {
+  (void)callback;
+  if (!async_h_file_ || !async_h_file_->hasCapacity()) { return false; }
+
+  size_t entry_size = hidden_size_ * ELEMENT_SIZE;
+  size_t layer_stride = max_length_ * entry_size;
+  size_t file_offset = range.layer_idx * layer_stride + range.offset * entry_size;
+
+  auto ptr = h_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, range.offset, 0});
+  auto req_id = async_h_file_->submitRead(ptr, range.count * entry_size, file_offset);
+  if (req_id == 0) { return false; }
+
+  ++inflight_count_;
+  return true;
+}
+
+bool GenerationState::submitWriteK(const CacheRange& range, StateIOCallback callback) {
+  (void)callback;
+  if (!async_k_file_ || !async_k_file_->hasCapacity()) { return false; }
+
+  size_t entry_size = kv_dim_ * ELEMENT_SIZE;
+  size_t head_stride = max_length_ * entry_size;
+  size_t layer_stride = q_heads_ * head_stride;
+
+  for (int h = 0; h < q_heads_; ++h) {
+    size_t file_offset =
+        range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
+    auto ptr = k_cache_[range.layer_idx].cptrAt<mllm_byte_t>({0, h, range.offset, 0});
+    auto req_id = async_k_file_->submitWrite(ptr, range.count * entry_size, file_offset);
+    if (req_id == 0) { return false; }
+  }
+
+  ++inflight_count_;
+  return true;
+}
+
+bool GenerationState::submitWriteV(const CacheRange& range, StateIOCallback callback) {
+  (void)callback;
+  if (!async_v_file_ || !async_v_file_->hasCapacity()) { return false; }
+
+  size_t entry_size = kv_dim_ * ELEMENT_SIZE;
+  size_t head_stride = max_length_ * entry_size;
+  size_t layer_stride = q_heads_ * head_stride;
+
+  for (int h = 0; h < q_heads_; ++h) {
+    size_t file_offset =
+        range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
+    auto ptr = v_cache_[range.layer_idx].cptrAt<mllm_byte_t>({0, h, range.offset, 0});
+    auto req_id = async_v_file_->submitWrite(ptr, range.count * entry_size, file_offset);
+    if (req_id == 0) { return false; }
+  }
+
+  ++inflight_count_;
+  return true;
+}
+
+bool GenerationState::submitWriteH(const CacheRange& range, StateIOCallback callback) {
+  (void)callback;
+  if (!async_h_file_ || !async_h_file_->hasCapacity()) { return false; }
+
+  size_t entry_size = hidden_size_ * ELEMENT_SIZE;
+  size_t layer_stride = max_length_ * entry_size;
+  size_t file_offset = range.layer_idx * layer_stride + range.offset * entry_size;
+
+  auto ptr = h_cache_[range.layer_idx].cptrAt<mllm_byte_t>({0, range.offset, 0});
+  auto req_id = async_h_file_->submitWrite(ptr, range.count * entry_size, file_offset);
+  if (req_id == 0) { return false; }
+
+  ++inflight_count_;
+  return true;
+}
+
+bool GenerationState::submitFsync(StateIOType type, StateIOCallback callback) {
+  if (type != StateIOType::kFsyncK && type != StateIOType::kFsyncV && type != StateIOType::kFsyncH
+      && type != StateIOType::kFsyncWatermark) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pending_fsyncs_.push_back({type, {}, std::move(callback)});
+    ++inflight_count_;
+  }
+  fsync_cv_.notify_one();
+  return true;
+}
+
+bool GenerationState::submitWriteWatermark(StateIOCallback callback) {
+  watermark_file_.pwrite(layer_watermark_.data(), max_length_, 0);
+  last_saved_watermark_ = layer_watermark_;
+
+  if (callback) { callback(StateIOType::kWriteWatermark, {}, true); }
+  return true;
+}
+
+std::vector<StateIOCompletion> GenerationState::poll() {
+  std::vector<StateIOCompletion> results;
+
+  if (async_k_file_) {
+    auto completions = async_k_file_->poll();
+    for (const auto& c : completions) {
+      if (c.status == AsyncIOStatus::kCompleted) { --inflight_count_; }
+    }
+  }
+  if (async_v_file_) {
+    auto completions = async_v_file_->poll();
+    for (const auto& c : completions) {
+      if (c.status == AsyncIOStatus::kCompleted) { --inflight_count_; }
+    }
+  }
+  if (async_h_file_) {
+    auto completions = async_h_file_->poll();
+    for (const auto& c : completions) {
+      if (c.status == AsyncIOStatus::kCompleted) { --inflight_count_; }
+    }
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    results = std::move(completed_ios_);
+    completed_ios_.clear();
+  }
+
+  return results;
+}
+
+int32_t GenerationState::inflightCount() const { return inflight_count_.load(); }
+
+bool GenerationState::hasInflight() const { return inflight_count_.load() > 0; }
+
+bool GenerationState::hasAsyncCapacity() const {
+  if (!async_k_file_ || !async_v_file_ || !async_h_file_) { return false; }
+  return async_k_file_->hasCapacity() && async_v_file_->hasCapacity()
+         && async_h_file_->hasCapacity();
 }
 
 }  // namespace mllm::models::qwen3_i
