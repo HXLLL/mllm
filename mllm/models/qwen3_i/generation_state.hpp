@@ -25,6 +25,7 @@ enum class GenerationPhase {
 class GenerationState {
  public:
   using Qwen3Config = models::qwen3::Qwen3Config;
+  using File = AioFile;  // Or PosixFile
 
   explicit GenerationState(const std::filesystem::path& path);
   ~GenerationState() = default;

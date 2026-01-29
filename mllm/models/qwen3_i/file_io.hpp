@@ -267,10 +267,8 @@ class AioFile : public SyncFile {
 };
 
 // ============================================================================
-// Default type alias and utilities
+// Utilities
 // ============================================================================
-
-using File = AioFile;
 
 inline void preallocate_file(const fs::path& dir, const std::string& filename, size_t size) {
   if (!fs::exists(dir)) { fs::create_directories(dir); }
