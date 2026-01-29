@@ -51,6 +51,7 @@ class Task {
 
   virtual bool submit() { return false; }
   [[nodiscard]] virtual bool isAsync() const { return false; }
+  virtual void onIOComplete(StateIOType, const CacheRange&, bool) {}
 
   [[nodiscard]] TaskStatus status() const { return status_; }
   [[nodiscard]] bool isPending() const { return status_ == TaskStatus::kPending; }
@@ -91,6 +92,9 @@ class LoadKVTask : public Task {
   LoadKVTask(const CellIndex& idx, RuntimeContext& ctx) : Task(), idx_(idx), ctx_(ctx) {}
 
   void execute() override;
+  bool submit() override;
+  [[nodiscard]] bool isAsync() const override { return true; }
+  void onIOComplete(StateIOType type, const CacheRange& range, bool success) override;
   [[nodiscard]] std::string name() const override {
     return fmt::format("LoadKV[{}][{}]", idx_.layer, idx_.chunk_id);
   }
@@ -100,6 +104,8 @@ class LoadKVTask : public Task {
  private:
   CellIndex idx_;
   RuntimeContext& ctx_;
+  bool k_done_{false};
+  bool v_done_{false};
 };
 
 // Load hidden state from checkpoint
@@ -108,6 +114,9 @@ class LoadHTask : public Task {
   LoadHTask(const CellIndex& idx, RuntimeContext& ctx) : Task(), idx_(idx), ctx_(ctx) {}
 
   void execute() override;
+  bool submit() override;
+  [[nodiscard]] bool isAsync() const override { return true; }
+  void onIOComplete(StateIOType type, const CacheRange& range, bool success) override;
   [[nodiscard]] std::string name() const override {
     return fmt::format("LoadH[{}][{}]", idx_.layer, idx_.chunk_id);
   }
@@ -117,6 +126,7 @@ class LoadHTask : public Task {
  private:
   CellIndex idx_;
   RuntimeContext& ctx_;
+  bool done_{false};
 };
 
 // Compute: H2KV + KV2H

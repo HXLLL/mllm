@@ -24,28 +24,68 @@ void LoadParamTask::execute() {
 // LoadKVTask
 
 void LoadKVTask::execute() {
+  if (!submit()) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "LoadKVTask submit failed");
+  }
+}
+
+bool LoadKVTask::submit() {
   auto tracer = Context::instance().tracer();
   tracer->record<LoadKVBeginEvent>(idx_.layer, idx_.chunk_id);
   const auto& r = idx_.range;
   auto& state = ctx_.state();
   MLLM_RT_ASSERT(!state.isKVLoaded(r));
-  state.loadLayerKCache(r);
-  state.loadLayerVCache(r);
-  tracer->record<LoadKVCompleteEvent>(idx_.layer, idx_.chunk_id);
-  complete();
+  if (!state.submitLoadK(r) || !state.submitLoadV(r)) { return false; }
+  markSubmitted();
+  return true;
+}
+
+void LoadKVTask::onIOComplete(StateIOType type, const CacheRange& range, bool success) {
+  if (range != idx_.range) { return; }
+  if (!success) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "LoadKV failed: layer={}, chunk={}", idx_.layer,
+                    idx_.chunk_id);
+  }
+  if (type == StateIOType::kLoadK) { k_done_ = true; }
+  if (type == StateIOType::kLoadV) { v_done_ = true; }
+  if (k_done_ && v_done_) {
+    auto tracer = Context::instance().tracer();
+    tracer->record<LoadKVCompleteEvent>(idx_.layer, idx_.chunk_id);
+    complete();
+  }
 }
 
 // LoadHTask
 
 void LoadHTask::execute() {
+  if (!submit()) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "LoadHTask submit failed");
+  }
+}
+
+bool LoadHTask::submit() {
   auto tracer = Context::instance().tracer();
   tracer->record<LoadHBeginEvent>(idx_.layer, idx_.chunk_id);
   const auto& r = idx_.range;
   auto& state = ctx_.state();
   MLLM_RT_ASSERT(!state.isHLoaded(r));
-  state.loadLayerHCache(r);
-  tracer->record<LoadHCompleteEvent>(idx_.layer, idx_.chunk_id);
-  complete();
+  if (!state.submitLoadH(r)) { return false; }
+  markSubmitted();
+  return true;
+}
+
+void LoadHTask::onIOComplete(StateIOType type, const CacheRange& range, bool success) {
+  if (type != StateIOType::kLoadH || range != idx_.range) { return; }
+  if (!success) {
+    MLLM_ERROR_EXIT(ExitCode::kIOError, "LoadH failed: layer={}, chunk={}", idx_.layer,
+                    idx_.chunk_id);
+  }
+  done_ = true;
+  if (done_) {
+    auto tracer = Context::instance().tracer();
+    tracer->record<LoadHCompleteEvent>(idx_.layer, idx_.chunk_id);
+    complete();
+  }
 }
 
 // ComputeTask

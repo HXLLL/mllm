@@ -25,13 +25,45 @@ GridScheduler::GridScheduler(std::vector<LayerContext> layers, std::vector<Chunk
 
 void GridScheduler::run() {
   while (!isDone()) {
+    auto completions = ctx_.state().poll();
+    for (const auto& c : completions) {
+      int chunk_id = -1;
+      for (int i = 0; i < num_chunks_; ++i) {
+        auto& chunk = chunks_[i];
+        if (chunk.start_pos == c.range.offset
+            && chunk.end_pos - chunk.start_pos == c.range.count) {
+          chunk_id = i;
+          break;
+        }
+      }
+      if (chunk_id < 0 || c.range.layer_idx < 0 || c.range.layer_idx > num_layers_) {
+        MLLM_WARN("Unknown completion: type={}, layer={}, offset={}, count={}",
+                  static_cast<int>(c.type), c.range.layer_idx, c.range.offset, c.range.count);
+        continue;
+      }
+      auto& cell = grid_[c.range.layer_idx][chunk_id];
+      if (c.type == StateIOType::kLoadK || c.type == StateIOType::kLoadV) {
+        if (cell.load_kv) { cell.load_kv->onIOComplete(c.type, c.range, c.success); }
+      } else if (c.type == StateIOType::kLoadH) {
+        if (cell.load_h) { cell.load_h->onIOComplete(c.type, c.range, c.success); }
+      }
+    }
+
     Task* task = selectNext();
-    if (!task) { 
-      MLLM_INFO("No task to execute");
-      continue; 
+    if (!task) {
+      if (!ctx_.state().hasInflight()) { MLLM_INFO("No task to execute"); }
+      continue;
     }
     if (!task->isReady()) {
       MLLM_ERROR_EXIT(ExitCode::kCoreError, "Task is not ready: {}", task->name());
+      continue;
+    }
+    if (task->isAsync()) {
+      if (task->isPending()) {
+        if (task->submit()) {
+          MLLM_INFO("Task submitted: {}, status: {}", task->name(), toString(task->status()));
+        }
+      }
       continue;
     }
     task->execute();
