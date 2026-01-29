@@ -11,24 +11,16 @@ namespace mllm::models::qwen3_i {
 
 namespace fs = std::filesystem;
 
-GenerationState::GenerationState(const fs::path& path) : path_(path) {
-  fsync_worker_ = std::thread(&GenerationState::fsyncWorkerLoop, this);
-}
+GenerationState::GenerationState(const fs::path& path) : path_(path) {}
 
-GenerationState::~GenerationState() {
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    stop_fsync_worker_ = true;
-  }
-  fsync_cv_.notify_one();
-  if (fsync_worker_.joinable()) { fsync_worker_.join(); }
-}
+GenerationState::~GenerationState() = default;
 
 void GenerationState::create(const Qwen3Config& cfg) {
   initMetadata(cfg);
 
   createFiles();
   openFiles();
+  openAsyncFiles();
 
   initWatermark();
   initLoadedState();
@@ -44,6 +36,7 @@ void GenerationState::load() {
   openFiles();
 
   loadMetadata();
+  openAsyncFiles();
   tracer->record<StateLoadMetadataEvent>();
 
   loadWatermark();
@@ -67,6 +60,7 @@ void GenerationState::load() {
 void GenerationState::lazyLoad() {
   openFiles();
   loadMetadata();
+  openAsyncFiles();
   loadWatermark();
   initLoadedState();
   initCaches();
@@ -406,44 +400,11 @@ void GenerationState::openAsyncFiles() {
       std::make_unique<AsyncFile>(path_ / "h_cache.bin", kDefaultMaxInflight, buffer_size);
 }
 
-void GenerationState::fsyncWorkerLoop() {
-  while (true) {
-    PendingFsync fsync_task;
-    {
-      std::unique_lock<std::mutex> lock(mutex_);
-      fsync_cv_.wait(lock, [this] { return stop_fsync_worker_ || !pending_fsyncs_.empty(); });
-      if (stop_fsync_worker_ && pending_fsyncs_.empty()) { return; }
-      fsync_task = std::move(pending_fsyncs_.back());
-      pending_fsyncs_.pop_back();
-    }
-
-    bool success = true;
-    switch (fsync_task.type) {
-      case StateIOType::kFsyncK:
-        if (async_k_file_) { async_k_file_->fdatasync(); }
-        break;
-      case StateIOType::kFsyncV:
-        if (async_v_file_) { async_v_file_->fdatasync(); }
-        break;
-      case StateIOType::kFsyncH:
-        if (async_h_file_) { async_h_file_->fdatasync(); }
-        break;
-      case StateIOType::kFsyncWatermark: watermark_file_.fsync(); break;
-      default: success = false; break;
-    }
-
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      completed_ios_.push_back({fsync_task.type, fsync_task.range, success});
-      --inflight_count_;
-    }
-
-    if (fsync_task.callback) { fsync_task.callback(fsync_task.type, fsync_task.range, success); }
-  }
-}
-
-bool GenerationState::submitLoadK(const CacheRange& range, StateIOCallback callback) {
-  if (!async_k_file_ || !async_k_file_->hasCapacity()) { return false; }
+bool GenerationState::submitLoadK(const CacheRange& range) {
+  if (!async_k_file_ || async_k_file_->availableSlots() < q_heads_) { return false; }
+  RangeKey key{StateIOType::kLoadK, range.layer_idx, range.offset, range.count};
+  MLLM_RT_ASSERT(pending_ranges_.find(key) == pending_ranges_.end());
+  pending_ranges_[key] = {q_heads_, q_heads_, false};
 
   size_t entry_size = kv_dim_ * ELEMENT_SIZE;
   size_t head_stride = max_length_ * entry_size;
@@ -454,17 +415,19 @@ bool GenerationState::submitLoadK(const CacheRange& range, StateIOCallback callb
         range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
     auto ptr = k_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h, range.offset, 0});
     auto req_id = async_k_file_->submitRead(ptr, range.count * entry_size, file_offset);
-    if (req_id == 0) { return false; }
+    if (req_id == 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "submitLoadK failed"); }
+    request_map_[req_id] = key;
+    ++inflight_count_;
   }
 
-  ++inflight_count_;
-  (void)callback;
   return true;
 }
 
-bool GenerationState::submitLoadV(const CacheRange& range, StateIOCallback callback) {
-  (void)callback;
-  if (!async_v_file_ || !async_v_file_->hasCapacity()) { return false; }
+bool GenerationState::submitLoadV(const CacheRange& range) {
+  if (!async_v_file_ || async_v_file_->availableSlots() < q_heads_) { return false; }
+  RangeKey key{StateIOType::kLoadV, range.layer_idx, range.offset, range.count};
+  MLLM_RT_ASSERT(pending_ranges_.find(key) == pending_ranges_.end());
+  pending_ranges_[key] = {q_heads_, q_heads_, false};
 
   size_t entry_size = kv_dim_ * ELEMENT_SIZE;
   size_t head_stride = max_length_ * entry_size;
@@ -475,16 +438,19 @@ bool GenerationState::submitLoadV(const CacheRange& range, StateIOCallback callb
         range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
     auto ptr = v_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h, range.offset, 0});
     auto req_id = async_v_file_->submitRead(ptr, range.count * entry_size, file_offset);
-    if (req_id == 0) { return false; }
+    if (req_id == 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "submitLoadV failed"); }
+    request_map_[req_id] = key;
+    ++inflight_count_;
   }
 
-  ++inflight_count_;
   return true;
 }
 
-bool GenerationState::submitLoadH(const CacheRange& range, StateIOCallback callback) {
-  (void)callback;
+bool GenerationState::submitLoadH(const CacheRange& range) {
   if (!async_h_file_ || !async_h_file_->hasCapacity()) { return false; }
+  RangeKey key{StateIOType::kLoadH, range.layer_idx, range.offset, range.count};
+  MLLM_RT_ASSERT(pending_ranges_.find(key) == pending_ranges_.end());
+  pending_ranges_[key] = {1, 1, false};
 
   size_t entry_size = hidden_size_ * ELEMENT_SIZE;
   size_t layer_stride = max_length_ * entry_size;
@@ -492,15 +458,18 @@ bool GenerationState::submitLoadH(const CacheRange& range, StateIOCallback callb
 
   auto ptr = h_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, range.offset, 0});
   auto req_id = async_h_file_->submitRead(ptr, range.count * entry_size, file_offset);
-  if (req_id == 0) { return false; }
+  if (req_id == 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "submitLoadH failed"); }
 
+  request_map_[req_id] = key;
   ++inflight_count_;
   return true;
 }
 
-bool GenerationState::submitWriteK(const CacheRange& range, StateIOCallback callback) {
-  (void)callback;
-  if (!async_k_file_ || !async_k_file_->hasCapacity()) { return false; }
+bool GenerationState::submitWriteK(const CacheRange& range) {
+  if (!async_k_file_ || async_k_file_->availableSlots() < q_heads_) { return false; }
+  RangeKey key{StateIOType::kWriteK, range.layer_idx, range.offset, range.count};
+  MLLM_RT_ASSERT(pending_ranges_.find(key) == pending_ranges_.end());
+  pending_ranges_[key] = {q_heads_, q_heads_, false};
 
   size_t entry_size = kv_dim_ * ELEMENT_SIZE;
   size_t head_stride = max_length_ * entry_size;
@@ -511,16 +480,19 @@ bool GenerationState::submitWriteK(const CacheRange& range, StateIOCallback call
         range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
     auto ptr = k_cache_[range.layer_idx].cptrAt<mllm_byte_t>({0, h, range.offset, 0});
     auto req_id = async_k_file_->submitWrite(ptr, range.count * entry_size, file_offset);
-    if (req_id == 0) { return false; }
+    if (req_id == 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "submitWriteK failed"); }
+    request_map_[req_id] = key;
+    ++inflight_count_;
   }
 
-  ++inflight_count_;
   return true;
 }
 
-bool GenerationState::submitWriteV(const CacheRange& range, StateIOCallback callback) {
-  (void)callback;
-  if (!async_v_file_ || !async_v_file_->hasCapacity()) { return false; }
+bool GenerationState::submitWriteV(const CacheRange& range) {
+  if (!async_v_file_ || async_v_file_->availableSlots() < q_heads_) { return false; }
+  RangeKey key{StateIOType::kWriteV, range.layer_idx, range.offset, range.count};
+  MLLM_RT_ASSERT(pending_ranges_.find(key) == pending_ranges_.end());
+  pending_ranges_[key] = {q_heads_, q_heads_, false};
 
   size_t entry_size = kv_dim_ * ELEMENT_SIZE;
   size_t head_stride = max_length_ * entry_size;
@@ -531,16 +503,19 @@ bool GenerationState::submitWriteV(const CacheRange& range, StateIOCallback call
         range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
     auto ptr = v_cache_[range.layer_idx].cptrAt<mllm_byte_t>({0, h, range.offset, 0});
     auto req_id = async_v_file_->submitWrite(ptr, range.count * entry_size, file_offset);
-    if (req_id == 0) { return false; }
+    if (req_id == 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "submitWriteV failed"); }
+    request_map_[req_id] = key;
+    ++inflight_count_;
   }
 
-  ++inflight_count_;
   return true;
 }
 
-bool GenerationState::submitWriteH(const CacheRange& range, StateIOCallback callback) {
-  (void)callback;
+bool GenerationState::submitWriteH(const CacheRange& range) {
   if (!async_h_file_ || !async_h_file_->hasCapacity()) { return false; }
+  RangeKey key{StateIOType::kWriteH, range.layer_idx, range.offset, range.count};
+  MLLM_RT_ASSERT(pending_ranges_.find(key) == pending_ranges_.end());
+  pending_ranges_[key] = {1, 1, false};
 
   size_t entry_size = hidden_size_ * ELEMENT_SIZE;
   size_t layer_stride = max_length_ * entry_size;
@@ -548,55 +523,97 @@ bool GenerationState::submitWriteH(const CacheRange& range, StateIOCallback call
 
   auto ptr = h_cache_[range.layer_idx].cptrAt<mllm_byte_t>({0, range.offset, 0});
   auto req_id = async_h_file_->submitWrite(ptr, range.count * entry_size, file_offset);
-  if (req_id == 0) { return false; }
+  if (req_id == 0) { MLLM_ERROR_EXIT(ExitCode::kIOError, "submitWriteH failed"); }
 
+  request_map_[req_id] = key;
   ++inflight_count_;
   return true;
 }
 
-bool GenerationState::submitFsync(StateIOType type, StateIOCallback callback) {
-  if (type != StateIOType::kFsyncK && type != StateIOType::kFsyncV && type != StateIOType::kFsyncH
-      && type != StateIOType::kFsyncWatermark) {
-    return false;
+bool GenerationState::submitFsync(StateIOType type) {
+  switch (type) {
+    case StateIOType::kFsyncK:
+      if (async_k_file_) { async_k_file_->fdatasync(); }
+      break;
+    case StateIOType::kFsyncV:
+      if (async_v_file_) { async_v_file_->fdatasync(); }
+      break;
+    case StateIOType::kFsyncH:
+      if (async_h_file_) { async_h_file_->fdatasync(); }
+      break;
+    case StateIOType::kFsyncWatermark: watermark_file_.fsync(); break;
+    default: return false;
   }
-
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    pending_fsyncs_.push_back({type, {}, std::move(callback)});
-    ++inflight_count_;
+    completed_ios_.push_back({type, {}, true});
   }
-  fsync_cv_.notify_one();
   return true;
 }
 
-bool GenerationState::submitWriteWatermark(StateIOCallback callback) {
+bool GenerationState::submitWriteWatermark() {
   watermark_file_.pwrite(layer_watermark_.data(), max_length_, 0);
   last_saved_watermark_ = layer_watermark_;
 
-  if (callback) { callback(StateIOType::kWriteWatermark, {}, true); }
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    completed_ios_.push_back({StateIOType::kWriteWatermark, {}, true});
+  }
   return true;
 }
 
 std::vector<StateIOCompletion> GenerationState::poll() {
   std::vector<StateIOCompletion> results;
+  auto handle_completions = [&](const std::vector<AsyncIOCompletion>& completions) {
+    for (const auto& c : completions) {
+      auto it = request_map_.find(c.request_id);
+      if (it == request_map_.end()) {
+        MLLM_WARN("GenerationState: unknown async completion {}", c.request_id);
+        continue;
+      }
+      RangeKey key = it->second;
+      request_map_.erase(it);
+
+      auto pr = pending_ranges_.find(key);
+      if (pr == pending_ranges_.end()) {
+        MLLM_WARN("GenerationState: missing pending range for request {}", c.request_id);
+        continue;
+      }
+
+      auto& pending = pr->second;
+      if (c.status != AsyncIOStatus::kCompleted) { pending.failed = true; }
+      --pending.remaining;
+      --inflight_count_;
+
+      if (pending.remaining == 0) {
+        CacheRange range{key.layer_idx, key.offset, key.count};
+        bool ok = !pending.failed;
+        if (ok) {
+          switch (key.type) {
+            case StateIOType::kLoadK: markLoaded(k_loaded_, range); break;
+            case StateIOType::kLoadV: markLoaded(v_loaded_, range); break;
+            case StateIOType::kLoadH: markLoaded(h_loaded_, range); break;
+            default: break;
+          }
+        }
+
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          completed_ios_.push_back({key.type, range, ok});
+        }
+        pending_ranges_.erase(pr);
+      }
+    }
+  };
 
   if (async_k_file_) {
-    auto completions = async_k_file_->poll();
-    for (const auto& c : completions) {
-      if (c.status == AsyncIOStatus::kCompleted) { --inflight_count_; }
-    }
+    handle_completions(async_k_file_->poll());
   }
   if (async_v_file_) {
-    auto completions = async_v_file_->poll();
-    for (const auto& c : completions) {
-      if (c.status == AsyncIOStatus::kCompleted) { --inflight_count_; }
-    }
+    handle_completions(async_v_file_->poll());
   }
   if (async_h_file_) {
-    auto completions = async_h_file_->poll();
-    for (const auto& c : completions) {
-      if (c.status == AsyncIOStatus::kCompleted) { --inflight_count_; }
-    }
+    handle_completions(async_h_file_->poll());
   }
 
   {

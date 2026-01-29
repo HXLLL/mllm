@@ -1,10 +1,8 @@
 #pragma once
 
 #include <atomic>
-#include <condition_variable>
-#include <functional>
 #include <mutex>
-#include <thread>
+#include <unordered_map>
 
 #include "mllm/core/Tensor.hpp"
 #include "mllm/mllm.hpp"
@@ -53,8 +51,6 @@ struct StateIOCompletion {
   bool success;
 };
 
-using StateIOCallback = std::function<void(StateIOType, const CacheRange&, bool)>;
-
 class GenerationState {
  public:
   using Qwen3Config = models::qwen3::Qwen3Config;
@@ -90,8 +86,12 @@ class GenerationState {
   [[nodiscard]] bool isPositionComplete(int pos) const;
 
   /* getter for loaded state */
-  [[nodiscard]] bool isKVLoaded(const CacheRange& range) const { return isRangeLoaded(k_loaded_, range) && isRangeLoaded(v_loaded_, range); }
-  [[nodiscard]] bool isHLoaded(const CacheRange& range) const { return isRangeLoaded(h_loaded_, range); }
+  [[nodiscard]] bool isKVLoaded(const CacheRange& range) const {
+    return isRangeLoaded(k_loaded_, range) && isRangeLoaded(v_loaded_, range);
+  }
+  [[nodiscard]] bool isHLoaded(const CacheRange& range) const {
+    return isRangeLoaded(h_loaded_, range);
+  }
 
   /* cache lazy loading */
   void loadLayerKCache(const CacheRange& range);
@@ -104,14 +104,14 @@ class GenerationState {
   void updateKV(const CacheRange& range, const Tensor& k, const Tensor& v);
   void updateH(const CacheRange& range, const Tensor& h);
 
-  bool submitLoadK(const CacheRange& range, StateIOCallback callback = nullptr);
-  bool submitLoadV(const CacheRange& range, StateIOCallback callback = nullptr);
-  bool submitLoadH(const CacheRange& range, StateIOCallback callback = nullptr);
-  bool submitWriteK(const CacheRange& range, StateIOCallback callback = nullptr);
-  bool submitWriteV(const CacheRange& range, StateIOCallback callback = nullptr);
-  bool submitWriteH(const CacheRange& range, StateIOCallback callback = nullptr);
-  bool submitFsync(StateIOType type, StateIOCallback callback = nullptr);
-  bool submitWriteWatermark(StateIOCallback callback = nullptr);
+  bool submitLoadK(const CacheRange& range);
+  bool submitLoadV(const CacheRange& range);
+  bool submitLoadH(const CacheRange& range);
+  bool submitWriteK(const CacheRange& range);
+  bool submitWriteV(const CacheRange& range);
+  bool submitWriteH(const CacheRange& range);
+  bool submitFsync(StateIOType type);
+  bool submitWriteWatermark();
 
   std::vector<StateIOCompletion> poll();
   [[nodiscard]] int32_t inflightCount() const;
@@ -153,14 +153,6 @@ class GenerationState {
   void openFiles();
   void openAsyncFiles();
 
-  void fsyncWorkerLoop();
-
-  struct PendingFsync {
-    StateIOType type;
-    CacheRange range;
-    StateIOCallback callback;
-  };
-
   std::filesystem::path path_;
 
   int max_length_;
@@ -192,14 +184,40 @@ class GenerationState {
   std::unique_ptr<AsyncFile> async_v_file_;
   std::unique_ptr<AsyncFile> async_h_file_;
 
+  struct RangeKey {
+    StateIOType type;
+    int layer_idx;
+    int offset;
+    int count;
+
+    bool operator==(const RangeKey& other) const {
+      return type == other.type && layer_idx == other.layer_idx && offset == other.offset
+             && count == other.count;
+    }
+  };
+
+  struct RangeKeyHash {
+    size_t operator()(const RangeKey& key) const {
+      size_t h1 = std::hash<int>()(static_cast<int>(key.type));
+      size_t h2 = std::hash<int>()(key.layer_idx);
+      size_t h3 = std::hash<int>()(key.offset);
+      size_t h4 = std::hash<int>()(key.count);
+      return ((h1 ^ (h2 << 1)) >> 1) ^ (h3 << 1) ^ (h4 << 2);
+    }
+  };
+
+  struct PendingRange {
+    int expected = 0;
+    int remaining = 0;
+    bool failed = false;
+  };
+
+  std::unordered_map<RequestId, RangeKey> request_map_;
+  std::unordered_map<RangeKey, PendingRange, RangeKeyHash> pending_ranges_;
+
   std::mutex mutex_;
   std::vector<StateIOCompletion> completed_ios_;
   std::atomic<int32_t> inflight_count_{0};
-
-  std::thread fsync_worker_;
-  std::atomic<bool> stop_fsync_worker_{false};
-  std::condition_variable fsync_cv_;
-  std::vector<PendingFsync> pending_fsyncs_;
 };
 
 }  // namespace mllm::models::qwen3_i
