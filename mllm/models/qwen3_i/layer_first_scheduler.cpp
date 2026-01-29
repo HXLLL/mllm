@@ -30,8 +30,8 @@ Task* LayerFirstScheduler::selectNextComputeTask() {
     for (; current_chunk_ < numChunks(); ++current_chunk_) {
       auto& cell = getCell(current_layer_, current_chunk_);
 
-      if (cell.load_kv && !cell.load_kv->isCompleted()) { return cell.load_kv.get(); }
-      if (cell.load_h && !cell.load_h->isCompleted()) { return cell.load_h.get(); }
+      if (cell.load_kv && cell.load_kv->isPending()) { return cell.load_kv.get(); }
+      if (cell.load_h && cell.load_h->isPending()) { return cell.load_h.get(); }
       if (cell.compute && !cell.compute->isCompleted() && cell.compute->isReady()) {
         return cell.compute.get();
       }
