@@ -50,6 +50,11 @@ add_library(
 target_include_directories(MllmRT PUBLIC ${MLLM_INCLUDE_DIR} ${MLLM_JSON_INCLUDE_DIR})
 target_link_libraries(MllmRT PUBLIC fmt::fmt-header-only STDEXEC::stdexec xxHash::xxhash)
 
+# Link libaio for Native AIO support (Linux only)
+if(UNIX AND NOT APPLE)
+  target_link_libraries(MllmRT PUBLIC aio)
+endif()
+
 # Compiler stack need mlir
 if(MLLM_ENABLE_MLLM_COMPILE_STACK)
   set(MLIR_DIR ${MLLM_COMPILE_STACK_TOOL_PATH}/lib/cmake/mlir)
