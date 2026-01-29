@@ -42,19 +42,13 @@ void GenerationState::load() {
   initLoadedState();
   initCaches();
 
-  for (int layer = 0; layer < layer_nums_; ++layer) {
-    loadLayerKCache({layer, 0, max_length_});
-  }
+  for (int layer = 0; layer < layer_nums_; ++layer) { loadLayerKCache({layer, 0, max_length_}); }
   tracer->record<StateLoadKCacheEvent>();
 
-  for (int layer = 0; layer < layer_nums_; ++layer) {
-    loadLayerVCache({layer, 0, max_length_});
-  }
+  for (int layer = 0; layer < layer_nums_; ++layer) { loadLayerVCache({layer, 0, max_length_}); }
   tracer->record<StateLoadVCacheEvent>();
 
-  for (int layer = 0; layer <= layer_nums_; ++layer) {
-    loadLayerHCache({layer, 0, max_length_});
-  }
+  for (int layer = 0; layer <= layer_nums_; ++layer) { loadLayerHCache({layer, 0, max_length_}); }
   tracer->record<StateLoadHCacheEvent>();
 
   tracer->record<StateLoadCompleteEvent>();
@@ -80,8 +74,8 @@ void GenerationState::checkpoint() {
   // Write data files with layer-major sequential writes
   tracer->record<CheckpointFilesOpenEvent>();
 
-  for (int layer = 0; layer <= layer_nums_; ++layer) { 
-    count += writeHCacheLayer(h_cache_file_, layer); 
+  for (int layer = 0; layer <= layer_nums_; ++layer) {
+    count += writeHCacheLayer(h_cache_file_, layer);
   }
   tracer->record<CheckpointHCacheWriteEvent>();
 
@@ -110,13 +104,13 @@ void GenerationState::startPrefill(const Tensor& token_ids) {
   phase_ = GenerationPhase::kPrefill;
 }
 
-void GenerationState::startDecode() {
-  phase_ = GenerationPhase::kDecode;
-}
+void GenerationState::startDecode() { phase_ = GenerationPhase::kDecode; }
 
 int GenerationState::getMinWatermark(int offset, int count) const {
   int min_layer = layer_watermark_[offset];
-  for (int i = 1; i < count; ++i) { min_layer = std::min(min_layer, static_cast<int>(layer_watermark_[offset + i])); }
+  for (int i = 1; i < count; ++i) {
+    min_layer = std::min(min_layer, static_cast<int>(layer_watermark_[offset + i]));
+  }
   return min_layer;
 }
 
@@ -171,8 +165,10 @@ void GenerationState::updateKV(const CacheRange& range, const Tensor& k, const T
     auto k_ptr = k.cptrAt<mllm_byte_t>({0, h, 0, 0});
     auto v_ptr = v.cptrAt<mllm_byte_t>({0, h, 0, 0});
     for (int r = 0; r < repeat_times; ++r) {
-      auto k_cache_ptr = k_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h * repeat_times + r, range.offset, 0});
-      auto v_cache_ptr = v_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h * repeat_times + r, range.offset, 0});
+      auto k_cache_ptr =
+          k_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h * repeat_times + r, range.offset, 0});
+      auto v_cache_ptr =
+          v_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, h * repeat_times + r, range.offset, 0});
       std::memcpy(k_cache_ptr, k_ptr, range.count * kv_dim_ * ELEMENT_SIZE);
       std::memcpy(v_cache_ptr, v_ptr, range.count * kv_dim_ * ELEMENT_SIZE);
     }
@@ -183,7 +179,8 @@ void GenerationState::updateKV(const CacheRange& range, const Tensor& k, const T
 }
 
 void GenerationState::updateH(const CacheRange& range, const Tensor& h) {
-  MLLM_RT_ASSERT(h.shape() == std::vector<int32_t>({1, range.count, hidden_size_}) && h.dtype() == kFloat32);
+  MLLM_RT_ASSERT(h.shape() == std::vector<int32_t>({1, range.count, hidden_size_})
+                 && h.dtype() == kFloat32);
   auto h_ptr = h.cptrAt<mllm_byte_t>({0, 0, 0});
   auto h_cache_ptr = h_cache_[range.layer_idx].ptrAt<mllm_byte_t>({0, range.offset, 0});
   std::memcpy(h_cache_ptr, h_ptr, range.count * hidden_size_ * ELEMENT_SIZE);
@@ -228,7 +225,7 @@ void GenerationState::saveMetadata() const {
   json_obj["hidden_size"] = hidden_size_;
   json_obj["input_tokens"] = input_tokens_;
   json_obj["phase"] = static_cast<int>(phase_);
-  
+
   auto metadata_file = FileDescriptor(path_ / "metadata.json");
   auto json_str = json_obj.dump(2);
   metadata_file.write(json_str.c_str(), json_str.size());
@@ -267,12 +264,16 @@ void GenerationState::markLoaded(std::vector<uint8_t>& loaded, const CacheRange&
   for (int i = 0; i < range.count; ++i) { loaded[base_idx + range.offset + i] = 1; }
 }
 
-void GenerationState::assertRangeLoaded(const std::vector<uint8_t>& loaded, const CacheRange& range) const {
+void GenerationState::assertRangeLoaded(const std::vector<uint8_t>& loaded,
+                                        const CacheRange& range) const {
   size_t base_idx = range.layer_idx * max_length_;
-  for (int i = 0; i < range.count; ++i) { MLLM_RT_ASSERT_EQ(loaded[base_idx + range.offset + i], 1); }
+  for (int i = 0; i < range.count; ++i) {
+    MLLM_RT_ASSERT_EQ(loaded[base_idx + range.offset + i], 1);
+  }
 }
 
-bool GenerationState::isRangeLoaded(const std::vector<uint8_t>& loaded, const CacheRange& range) const {
+bool GenerationState::isRangeLoaded(const std::vector<uint8_t>& loaded,
+                                    const CacheRange& range) const {
   size_t base_idx = range.layer_idx * max_length_;
   auto begin = loaded.begin() + base_idx + range.offset;
   return std::all_of(begin, begin + range.count, [](auto val) { return val != 0; });
@@ -285,8 +286,10 @@ void GenerationState::initCaches() {
   v_cache_.reserve(layer_nums_);
   h_cache_.reserve(layer_nums_ + 1);
   for (int i = 0; i < layer_nums_; ++i) {
-    k_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
-    v_cache_.emplace_back(Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
+    k_cache_.emplace_back(
+        Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
+    v_cache_.emplace_back(
+        Tensor::empty({1, q_heads_, max_length_, kv_dim_}, kFloat32, kCPU).alloc());
     h_cache_.emplace_back(Tensor::empty({1, max_length_, hidden_size_}, kFloat32, kCPU).alloc());
   }
   h_cache_.emplace_back(Tensor::empty({1, max_length_, hidden_size_}, kFloat32, kCPU).alloc());
@@ -294,7 +297,8 @@ void GenerationState::initCaches() {
 
 // Returns (start_pos, count) for positions that need to be written.
 // Returns count=0 if nothing needs to be written.
-std::pair<int, int> GenerationState::findWriteRange(const std::function<bool(int)>& shouldWrite) const {
+std::pair<int, int> GenerationState::findWriteRange(
+    const std::function<bool(int)>& shouldWrite) const {
   int pos = 0;
   // Skip positions that don't need writing
   while (pos < max_length_ && !shouldWrite(pos)) { pos++; }
@@ -305,9 +309,10 @@ std::pair<int, int> GenerationState::findWriteRange(const std::function<bool(int
   return {start_pos, pos - start_pos};
 }
 
-int GenerationState::writeHCacheLayer(File& file, int layer) {
-  auto [start_pos, count] =
-      findWriteRange([&](int pos) { return layer_watermark_[pos] >= layer && last_saved_watermark_[pos] < layer; });
+int GenerationState::writeHCacheLayer(SyncFile& file, int layer) {
+  auto [start_pos, count] = findWriteRange([&](int pos) {
+    return layer_watermark_[pos] >= layer && last_saved_watermark_[pos] < layer;
+  });
   if (count == 0) return 0;
   size_t h_entry_size = hidden_size_ * ELEMENT_SIZE;
   size_t layer_stride = static_cast<size_t>(layer) * max_length_ * h_entry_size;
@@ -317,23 +322,25 @@ int GenerationState::writeHCacheLayer(File& file, int layer) {
   return count;
 }
 
-int GenerationState::writeKVCacheLayer(File& file, const Tensor& cache, int layer) {
-  auto [start_pos, count] =
-      findWriteRange([&](int pos) { return layer_watermark_[pos] > layer && last_saved_watermark_[pos] <= layer; });
+int GenerationState::writeKVCacheLayer(SyncFile& file, const Tensor& cache, int layer) {
+  auto [start_pos, count] = findWriteRange([&](int pos) {
+    return layer_watermark_[pos] > layer && last_saved_watermark_[pos] <= layer;
+  });
   if (count == 0) return 0;
   size_t kv_entry_size = kv_dim_ * ELEMENT_SIZE;
   size_t head_stride = max_length_ * kv_entry_size;
   size_t layer_stride = static_cast<size_t>(layer) * q_heads_ * head_stride;
   for (int h = 0; h < q_heads_; ++h) {
-    size_t offset = layer_stride + static_cast<size_t>(h) * head_stride + static_cast<size_t>(start_pos) * kv_entry_size;
+    size_t offset = layer_stride + static_cast<size_t>(h) * head_stride
+                    + static_cast<size_t>(start_pos) * kv_entry_size;
     auto ptr = cache.cptrAt<mllm_byte_t>({0, h, start_pos, 0});
     file.pwrite(ptr, count * kv_entry_size, offset);
   }
   return count;
 }
 
-void GenerationState::loadLayerKVCacheImpl(File& file, std::vector<Tensor>& cache, std::vector<uint8_t>& loaded,
-                                           const CacheRange& range) {
+void GenerationState::loadLayerKVCacheImpl(SyncFile& file, std::vector<Tensor>& cache,
+                                           std::vector<uint8_t>& loaded, const CacheRange& range) {
   MLLM_RT_ASSERT(range.layer_idx >= 0 && range.layer_idx < layer_nums_);
   MLLM_RT_ASSERT(range.offset >= 0 && range.end() <= max_length_);
 
@@ -342,7 +349,8 @@ void GenerationState::loadLayerKVCacheImpl(File& file, std::vector<Tensor>& cach
   size_t layer_stride = q_heads_ * head_stride;
 
   for (int h = 0; h < q_heads_; ++h) {
-    size_t file_offset = range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
+    size_t file_offset =
+        range.layer_idx * layer_stride + h * head_stride + range.offset * entry_size;
     auto ptr = cache[range.layer_idx].ptrAt<mllm_byte_t>({0, h, range.offset, 0});
     file.pread(ptr, range.count * entry_size, file_offset);
   }
@@ -353,8 +361,10 @@ void GenerationState::loadLayerKVCacheImpl(File& file, std::vector<Tensor>& cach
 void GenerationState::createFiles() {
   if (!fs::exists(path_)) { fs::create_directories(path_); }
 
-  size_t kv_cache_size = static_cast<size_t>(layer_nums_) * max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE;
-  size_t h_cache_size = static_cast<size_t>(layer_nums_ + 1) * max_length_ * hidden_size_ * ELEMENT_SIZE;
+  size_t kv_cache_size =
+      static_cast<size_t>(layer_nums_) * max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE;
+  size_t h_cache_size =
+      static_cast<size_t>(layer_nums_ + 1) * max_length_ * hidden_size_ * ELEMENT_SIZE;
 
   preallocate_file(path_, "k_cache.bin", kv_cache_size);
   preallocate_file(path_, "v_cache.bin", kv_cache_size);
