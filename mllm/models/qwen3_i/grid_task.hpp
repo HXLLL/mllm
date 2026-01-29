@@ -27,15 +27,12 @@ inline const char* toString(TaskType type) {
   return "Unknown";
 }
 
-enum class TaskStatus {
-  kPending,
-  kCompleted,
-  kFailed
-};
+enum class TaskStatus { kPending, kSubmitted, kCompleted, kFailed };
 
 inline const char* toString(TaskStatus status) {
   switch (status) {
     case TaskStatus::kPending: return "Pending";
+    case TaskStatus::kSubmitted: return "Submitted";
     case TaskStatus::kCompleted: return "Completed";
     case TaskStatus::kFailed: return "Failed";
   }
@@ -52,10 +49,16 @@ class Task {
   [[nodiscard]] virtual std::string name() const = 0;
   [[nodiscard]] virtual TaskType taskType() const = 0;
 
+  virtual bool submit() { return false; }
+  [[nodiscard]] virtual bool isAsync() const { return false; }
+
   [[nodiscard]] TaskStatus status() const { return status_; }
+  [[nodiscard]] bool isPending() const { return status_ == TaskStatus::kPending; }
+  [[nodiscard]] bool isSubmitted() const { return status_ == TaskStatus::kSubmitted; }
   [[nodiscard]] bool isCompleted() const { return status_ == TaskStatus::kCompleted; }
 
  protected:
+  void markSubmitted() { status_ = TaskStatus::kSubmitted; }
   void complete() { status_ = TaskStatus::kCompleted; }
   void fail() { status_ = TaskStatus::kFailed; }
 
@@ -67,9 +70,7 @@ class LoadParamTask : public Task {
   LoadParamTask(int layer, RuntimeContext& ctx) : layer_(layer), ctx_(ctx) {}
 
   void execute() override;
-  [[nodiscard]] std::string name() const override {
-    return fmt::format("LoadParam[{}]", layer_);
-  }
+  [[nodiscard]] std::string name() const override { return fmt::format("LoadParam[{}]", layer_); }
   [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
   [[nodiscard]] bool isReady() const override { return true; }
 
@@ -122,8 +123,15 @@ class LoadHTask : public Task {
 
 class ComputeTask : public Task {
  public:
-  ComputeTask(const CellIndex& idx, H2KV& h2kv, KV2H& kv2h, const Tensor& sin_emb, const Tensor& cos_emb, RuntimeContext& ctx)
-      : Task(), idx_(idx), h2kv_(h2kv), kv2h_(kv2h), sin_emb_(sin_emb), cos_emb_(cos_emb), ctx_(ctx) {}
+  ComputeTask(const CellIndex& idx, H2KV& h2kv, KV2H& kv2h, const Tensor& sin_emb,
+              const Tensor& cos_emb, RuntimeContext& ctx)
+      : Task(),
+        idx_(idx),
+        h2kv_(h2kv),
+        kv2h_(kv2h),
+        sin_emb_(sin_emb),
+        cos_emb_(cos_emb),
+        ctx_(ctx) {}
   void execute() override;
   [[nodiscard]] std::string name() const override {
     return fmt::format("Compute[{}][{}]", idx_.layer, idx_.chunk_id);
@@ -140,6 +148,76 @@ class ComputeTask : public Task {
   KV2H& kv2h_;
   Tensor sin_emb_;
   Tensor cos_emb_;
+  RuntimeContext& ctx_;
+};
+
+class WriteKVTask : public Task {
+ public:
+  WriteKVTask(const CellIndex& idx, RuntimeContext& ctx) : Task(), idx_(idx), ctx_(ctx) {}
+
+  void execute() override;
+  bool submit() override;
+  [[nodiscard]] bool isAsync() const override { return true; }
+  [[nodiscard]] std::string name() const override {
+    return fmt::format("WriteKV[{}][{}]", idx_.layer, idx_.chunk_id);
+  }
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
+  [[nodiscard]] bool isReady() const override { return true; }
+
+ private:
+  CellIndex idx_;
+  RuntimeContext& ctx_;
+};
+
+class WriteHTask : public Task {
+ public:
+  WriteHTask(const CellIndex& idx, RuntimeContext& ctx) : Task(), idx_(idx), ctx_(ctx) {}
+
+  void execute() override;
+  bool submit() override;
+  [[nodiscard]] bool isAsync() const override { return true; }
+  [[nodiscard]] std::string name() const override {
+    return fmt::format("WriteH[{}][{}]", idx_.layer, idx_.chunk_id);
+  }
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
+  [[nodiscard]] bool isReady() const override { return true; }
+
+ private:
+  CellIndex idx_;
+  RuntimeContext& ctx_;
+};
+
+enum class FsyncTarget { kK, kV, kH, kWatermark };
+
+class FsyncTask : public Task {
+ public:
+  FsyncTask(FsyncTarget target, RuntimeContext& ctx) : Task(), target_(target), ctx_(ctx) {}
+
+  void execute() override;
+  bool submit() override;
+  [[nodiscard]] bool isAsync() const override { return true; }
+  [[nodiscard]] std::string name() const override {
+    const char* names[] = {"K", "V", "H", "Watermark"};
+    return fmt::format("Fsync[{}]", names[static_cast<int>(target_)]);
+  }
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
+  [[nodiscard]] bool isReady() const override { return true; }
+
+ private:
+  FsyncTarget target_;
+  RuntimeContext& ctx_;
+};
+
+class WriteWatermarkTask : public Task {
+ public:
+  explicit WriteWatermarkTask(RuntimeContext& ctx) : Task(), ctx_(ctx) {}
+
+  void execute() override;
+  [[nodiscard]] std::string name() const override { return "WriteWatermark"; }
+  [[nodiscard]] TaskType taskType() const override { return TaskType::kIO; }
+  [[nodiscard]] bool isReady() const override { return true; }
+
+ private:
   RuntimeContext& ctx_;
 };
 
