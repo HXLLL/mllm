@@ -40,8 +40,7 @@ inline bool isAligned(const void* ptr, size_t alignment) {
  */
 class AioContext {
  public:
-  explicit AioContext(int max_events = 64) {
-    ctx_ = 0;
+  explicit AioContext(int max_events = 64) : ctx_(nullptr) {
     int ret = io_setup(max_events, &ctx_);
     if (ret < 0) {
       MLLM_ERROR_EXIT(ExitCode::kIOError, "io_setup failed: {} ({})", -ret, strerror(-ret));
@@ -49,24 +48,24 @@ class AioContext {
   }
 
   ~AioContext() {
-    if (ctx_) { io_destroy(ctx_); }
+    if (ctx_ != nullptr) { io_destroy(ctx_); }
   }
 
   AioContext(const AioContext&) = delete;
   AioContext& operator=(const AioContext&) = delete;
 
-  AioContext(AioContext&& other) noexcept : ctx_(other.ctx_) { other.ctx_ = 0; }
+  AioContext(AioContext&& other) noexcept : ctx_(other.ctx_) { other.ctx_ = nullptr; }
 
   AioContext& operator=(AioContext&& other) noexcept {
     if (this != &other) {
-      if (ctx_) { io_destroy(ctx_); }
+      if (ctx_ != nullptr) { io_destroy(ctx_); }
       ctx_ = other.ctx_;
-      other.ctx_ = 0;
+      other.ctx_ = nullptr;
     }
     return *this;
   }
 
-  io_context_t get() const { return ctx_; }
+  [[nodiscard]] io_context_t get() const { return ctx_; }
 
  private:
   io_context_t ctx_;
