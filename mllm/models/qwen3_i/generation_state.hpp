@@ -73,7 +73,7 @@ class GenerationState {
 
  private:
   const size_t ELEMENT_SIZE = bytesOfType(kFloat32) / lanesOfType(kFloat32);
-  constexpr static size_t MAX_METADATA_FILE_SIZE = 1024 * 128; // 128KB
+  constexpr static size_t MAX_METADATA_FILE_SIZE = 1024 * 128;
 
   /* metadata management */
   void initMetadata(const Qwen3Config& cfg);
@@ -89,7 +89,8 @@ class GenerationState {
   void initLoadedState();
   void markLoaded(std::vector<uint8_t>& loaded, const CacheRange& range);
   void assertRangeLoaded(const std::vector<uint8_t>& loaded, const CacheRange& range) const;
-  [[nodiscard]] bool isRangeLoaded(const std::vector<uint8_t>& loaded, const CacheRange& range) const;
+  [[nodiscard]] bool isRangeLoaded(const std::vector<uint8_t>& loaded,
+                                   const CacheRange& range) const;
 
   /* cache management */
   /* allocate k/v/h caches in memory */
