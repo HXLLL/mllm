@@ -3,7 +3,7 @@
 #include "mllm/core/Tensor.hpp"
 #include "mllm/mllm.hpp"
 #include "mllm/models/qwen3/configuration_qwen3.hpp"
-#include "mllm/models/qwen3_i/aio_file.hpp"
+#include "mllm/models/qwen3_i/file_io.hpp"
 
 namespace mllm::models::qwen3_i {
 
@@ -95,10 +95,10 @@ class GenerationState {
   void initCaches();
   // Returns (start_pos, count) for positions that need to be written
   std::pair<int, int> findWriteRange(const std::function<bool(int)>& shouldWrite) const;
-  int writeHCacheLayer(AioFile& file, int layer);
-  int writeKVCacheLayer(AioFile& file, const Tensor& cache, int layer);
+  int writeHCacheLayer(File& file, int layer);
+  int writeKVCacheLayer(File& file, const Tensor& cache, int layer);
   /* init k/v/h loaded state in memory */
-  void loadLayerKVCacheImpl(AioFile& file, std::vector<Tensor>& cache, std::vector<uint8_t>& loaded,
+  void loadLayerKVCacheImpl(File& file, std::vector<Tensor>& cache, std::vector<uint8_t>& loaded,
                             const CacheRange& range);
 
   /* file management */
@@ -132,10 +132,10 @@ class GenerationState {
   std::vector<Tensor> h_cache_;  // Shape: [layer_nums + 1, 1, max_cache_length, hidden_size]
 
   /* file descriptors */
-  AioFile k_cache_file_;
-  AioFile v_cache_file_;
-  AioFile h_cache_file_;
-  AioFile watermark_file_;
+  File k_cache_file_;
+  File v_cache_file_;
+  File h_cache_file_;
+  File watermark_file_;
 };
 
 }  // namespace mllm::models::qwen3_i

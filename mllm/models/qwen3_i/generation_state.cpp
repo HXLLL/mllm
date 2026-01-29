@@ -5,7 +5,7 @@
 
 #include "mllm/models/qwen3_i/generation_state.hpp"
 #include "mllm/models/qwen3_i/qwen3_events.hpp"
-#include "mllm/models/qwen3_i/fs.hpp"  // For FileDescriptor (metadata files)
+#include "mllm/models/qwen3_i/fs.hpp"  // For FileDescriptor (metadata files only)
 
 namespace mllm::models::qwen3_i {
 
@@ -305,7 +305,7 @@ std::pair<int, int> GenerationState::findWriteRange(const std::function<bool(int
   return {start_pos, pos - start_pos};
 }
 
-int GenerationState::writeHCacheLayer(AioFile& file, int layer) {
+int GenerationState::writeHCacheLayer(File& file, int layer) {
   auto [start_pos, count] =
       findWriteRange([&](int pos) { return layer_watermark_[pos] >= layer && last_saved_watermark_[pos] < layer; });
   if (count == 0) return 0;
@@ -317,7 +317,7 @@ int GenerationState::writeHCacheLayer(AioFile& file, int layer) {
   return count;
 }
 
-int GenerationState::writeKVCacheLayer(AioFile& file, const Tensor& cache, int layer) {
+int GenerationState::writeKVCacheLayer(File& file, const Tensor& cache, int layer) {
   auto [start_pos, count] =
       findWriteRange([&](int pos) { return layer_watermark_[pos] > layer && last_saved_watermark_[pos] <= layer; });
   if (count == 0) return 0;
@@ -332,7 +332,7 @@ int GenerationState::writeKVCacheLayer(AioFile& file, const Tensor& cache, int l
   return count;
 }
 
-void GenerationState::loadLayerKVCacheImpl(AioFile& file, std::vector<Tensor>& cache, std::vector<uint8_t>& loaded,
+void GenerationState::loadLayerKVCacheImpl(File& file, std::vector<Tensor>& cache, std::vector<uint8_t>& loaded,
                                            const CacheRange& range) {
   MLLM_RT_ASSERT(range.layer_idx >= 0 && range.layer_idx < layer_nums_);
   MLLM_RT_ASSERT(range.offset >= 0 && range.end() <= max_length_);
@@ -356,22 +356,21 @@ void GenerationState::createFiles() {
   size_t kv_cache_size = static_cast<size_t>(layer_nums_) * max_length_ * q_heads_ * kv_dim_ * ELEMENT_SIZE;
   size_t h_cache_size = static_cast<size_t>(layer_nums_ + 1) * max_length_ * hidden_size_ * ELEMENT_SIZE;
 
-  // Use O_DIRECT aligned allocation for AIO compatibility
-  fallocate_file_direct(path_, "k_cache.bin", kv_cache_size);
-  fallocate_file_direct(path_, "v_cache.bin", kv_cache_size);
-  fallocate_file_direct(path_, "h_cache.bin", h_cache_size);
+  preallocate_file(path_, "k_cache.bin", kv_cache_size);
+  preallocate_file(path_, "v_cache.bin", kv_cache_size);
+  preallocate_file(path_, "h_cache.bin", h_cache_size);
 }
 
 void GenerationState::openFiles() {
-  // Calculate bounce buffer size based on max single I/O operation
+  // Calculate buffer size based on max single I/O operation
   // Largest single I/O is typically h_cache layer read: max_length * hidden_size * 4
   size_t max_io_size = static_cast<size_t>(max_length_) * hidden_size_ * ELEMENT_SIZE;
-  size_t bounce_size = std::max(max_io_size, static_cast<size_t>(1024 * 1024));  // At least 1MB
+  size_t buffer_size = std::max(max_io_size, static_cast<size_t>(1024 * 1024));  // At least 1MB
 
-  k_cache_file_ = AioFile(path_ / "k_cache.bin", bounce_size);
-  v_cache_file_ = AioFile(path_ / "v_cache.bin", bounce_size);
-  h_cache_file_ = AioFile(path_ / "h_cache.bin", bounce_size);
-  watermark_file_ = AioFile(path_ / "layer_watermark.bin", alignUp(max_length_, kDirectIOAlignment));
+  k_cache_file_ = File(path_ / "k_cache.bin", buffer_size);
+  v_cache_file_ = File(path_ / "v_cache.bin", buffer_size);
+  h_cache_file_ = File(path_ / "h_cache.bin", buffer_size);
+  watermark_file_ = File(path_ / "layer_watermark.bin", alignUp(max_length_, kDirectIOAlignment));
 }
 
 }  // namespace mllm::models::qwen3_i
