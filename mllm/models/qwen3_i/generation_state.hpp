@@ -46,6 +46,7 @@ enum class StateIOType {
 };
 
 struct StateIOCompletion {
+  uint64_t tag;
   StateIOType type;
   CacheRange range;
   bool success;
@@ -104,12 +105,12 @@ class GenerationState {
   void updateKV(const CacheRange& range, const Tensor& k, const Tensor& v);
   void updateH(const CacheRange& range, const Tensor& h);
 
-  bool submitLoadK(const CacheRange& range);
-  bool submitLoadV(const CacheRange& range);
-  bool submitLoadH(const CacheRange& range);
-  bool submitWriteK(const CacheRange& range);
-  bool submitWriteV(const CacheRange& range);
-  bool submitWriteH(const CacheRange& range);
+  bool submitLoadK(const CacheRange& range, uint64_t tag = 0);
+  bool submitLoadV(const CacheRange& range, uint64_t tag = 0);
+  bool submitLoadH(const CacheRange& range, uint64_t tag = 0);
+  bool submitWriteK(const CacheRange& range, uint64_t tag = 0);
+  bool submitWriteV(const CacheRange& range, uint64_t tag = 0);
+  bool submitWriteH(const CacheRange& range, uint64_t tag = 0);
   bool submitFsync(StateIOType type);
   bool submitWriteWatermark();
 
@@ -184,36 +185,29 @@ class GenerationState {
   std::unique_ptr<AsyncFile> async_v_file_;
   std::unique_ptr<AsyncFile> async_h_file_;
 
-  struct RangeKey {
+  struct PendingKey {
+    uint64_t tag;
     StateIOType type;
-    int layer_idx;
-    int offset;
-    int count;
+    bool operator==(const PendingKey& other) const { return tag == other.tag && type == other.type; }
+  };
 
-    bool operator==(const RangeKey& other) const {
-      return type == other.type && layer_idx == other.layer_idx && offset == other.offset
-             && count == other.count;
+  struct PendingKeyHash {
+    size_t operator()(const PendingKey& key) const {
+      size_t h1 = std::hash<uint64_t>()(key.tag);
+      size_t h2 = std::hash<int>()(static_cast<int>(key.type));
+      return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
     }
   };
 
-  struct RangeKeyHash {
-    size_t operator()(const RangeKey& key) const {
-      size_t h1 = std::hash<int>()(static_cast<int>(key.type));
-      size_t h2 = std::hash<int>()(key.layer_idx);
-      size_t h3 = std::hash<int>()(key.offset);
-      size_t h4 = std::hash<int>()(key.count);
-      return ((h1 ^ (h2 << 1)) >> 1) ^ (h3 << 1) ^ (h4 << 2);
-    }
-  };
-
-  struct PendingRange {
+  struct PendingIO {
+    CacheRange range;
     int expected = 0;
     int remaining = 0;
     bool failed = false;
   };
 
-  std::unordered_map<RequestId, RangeKey> request_map_;
-  std::unordered_map<RangeKey, PendingRange, RangeKeyHash> pending_ranges_;
+  std::unordered_map<RequestId, PendingKey> request_map_;
+  std::unordered_map<PendingKey, PendingIO, PendingKeyHash> pending_ios_;
 
   std::mutex mutex_;
   std::vector<StateIOCompletion> completed_ios_;
